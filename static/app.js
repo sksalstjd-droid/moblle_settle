@@ -198,10 +198,6 @@ function renderSummary() {
 }
 
 function renderStartOverCard() {
-  const card = $("startOverCard");
-  const hasRecords = state.names.length > 0 || state.payments.length > 0;
-
-  card.classList.toggle("hidden", !hasRecords);
   $("startOverSummary").textContent = `멤버 ${state.names.length}명 · 결제 ${state.payments.length}건`;
 }
 
@@ -443,6 +439,7 @@ function clearPaymentsOnly() {
   state.payments = [];
   showAllPayments = false;
   saveAndRender();
+  closeStartOverDetails();
 }
 
 function resetAll() {
@@ -452,11 +449,19 @@ function resetAll() {
   state = { names: [], payments: [], targets: {}, lastPayer: null };
   showAllPayments = false;
   saveAndRender();
+  closeStartOverDetails();
 
   window.requestAnimationFrame(() => {
     window.scrollTo({ top: scrollY, behavior: "auto" });
     $("amountInput").focus({ preventScroll: true });
   });
+}
+
+function closeStartOverDetails() {
+  const details = document.querySelector(".start-over-details");
+  if (details) {
+    details.open = false;
+  }
 }
 
 function showSaveSuccess(message) {
