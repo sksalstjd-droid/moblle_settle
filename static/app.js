@@ -251,9 +251,10 @@ function renderMembers() {
     card.style.borderLeftColor = colorOf(name);
 
     card.innerHTML = `
-      <div class="item-main">
-        <div class="item-title" style="color:${colorOf(name)};">👤 ${escapeHtml(name)}</div>
-        <div class="item-sub">낸 금액 ${won(paid[name] || 0)}</div>
+      <div class="item-title" style="color:${colorOf(name)};">👤 ${escapeHtml(name)}</div>
+      <div class="item-total">
+        <span>총</span>
+        <strong>${won(paid[name] || 0)}</strong>
       </div>
       <button class="delete-btn">삭제</button>
     `;
@@ -293,10 +294,8 @@ function renderPayments() {
     card.style.borderLeftColor = colorOf(payment.payer);
 
     card.innerHTML = `
-      <div class="item-main">
-        <div class="item-title" style="color:${colorOf(payment.payer)};">💳 ${escapeHtml(payment.payer)}</div>
-        <div class="item-amount">${won(payment.amount)}</div>
-      </div>
+      <div class="item-title" style="color:${colorOf(payment.payer)};">💳 ${escapeHtml(payment.payer)}</div>
+      <div class="item-amount">${won(payment.amount)}</div>
       <button class="delete-btn">삭제</button>
     `;
 
