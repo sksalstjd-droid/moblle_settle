@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>스마트 정산기</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <main class="app">
+    <header class="app-header">
+      <div>
+        <h1>💸 스마트 정산기</h1>
+      </div>
+    </header>
+
+    <section class="summary-grid" aria-label="정산 요약">
+      <article class="summary-card">
+        <span>총액</span>
+        <strong id="summaryTotal">0원</strong>
+      </article>
+      <article class="summary-card">
+        <span>정산 인원</span>
+        <strong id="summaryTargetCount">0명</strong>
+      </article>
+      <article class="summary-card">
+        <span>1인당</span>
+        <strong id="summaryPerHead">0원</strong>
+      </article>
+    </section>
+
+    <nav class="tab-bar" aria-label="화면 전환">
+      <button class="tab-btn active" data-tab="input">입력</button>
+      <button class="tab-btn" data-tab="result">결과</button>
+    </nav>
+
+    <section id="tabInput" class="tab-page active">
+      <section id="startOverCard" class="card start-over-card hidden">
+        <div class="section-title">
+          <h2>새 정산 시작</h2>
+          <span id="startOverSummary">이전 기록 있음</span>
+        </div>
+        <p class="start-over-text">이전 정산 기록이 남아 있어요.</p>
+        <div class="start-over-actions">
+          <button id="clearPaymentsBtn" class="ghost-btn">결제내역만 비우기</button>
+          <button id="resetBtn" class="danger-btn">전체 새로 시작</button>
+        </div>
+      </section>
+
+      <section id="quickInputCard" class="card">
+        <div class="section-title">
+          <h2>💳 빠른 입력</h2>
+          <span id="selectedPayerHint">이름과 금액</span>
+        </div>
+
+        <label class="field-label" for="payerInput">이름</label>
+        <input id="payerInput" class="name-input" placeholder="결제자 이름" autocomplete="off" />
+
+        <label class="field-label" for="amountInput">금액</label>
+        <input id="amountInput" class="amount-input" inputmode="numeric" pattern="[0-9]*" placeholder="0" />
+
+        <button id="savePaymentBtn" class="primary-btn full">결제 저장</button>
+
+        <div class="quick-name-area">
+          <div class="section-title sub-title">
+            <h3>빠른 이름 선택</h3>
+          </div>
+          <div id="payerButtons" class="chip-wrap empty">
+            <p class="empty-text">저장된 이름이 여기에 표시됩니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <details class="member-details">
+          <summary>
+            <span>멤버 관리</span>
+            <strong id="memberCountBadge">0명</strong>
+          </summary>
+
+          <div class="member-form">
+            <input id="memberInput" placeholder="이름 입력" autocomplete="off" />
+            <button id="addMemberBtn">추가</button>
+          </div>
+
+          <div id="memberList" class="list"></div>
+        </details>
+      </section>
+
+      <section class="card">
+        <div class="section-title">
+          <h2>📜 최근 결제 내역</h2>
+          <span id="paymentCountBadge">0건</span>
+        </div>
+        <div id="paymentList" class="list"></div>
+      </section>
+    </section>
+
+    <section id="tabResult" class="tab-page">
+      <section class="card">
+        <div class="section-title">
+          <h2>✅ 정산 대상자</h2>
+          <span id="targetCountBadge">0명</span>
+        </div>
+
+        <div class="action-row compact">
+          <button id="selectAllBtn" class="ghost-btn">전체 선택</button>
+          <button id="clearAllBtn" class="ghost-btn">전체 해제</button>
+        </div>
+
+        <div id="targetList" class="target-grid"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-title">
+          <h2>📊 정산 결과</h2>
+          <span>자동 계산</span>
+        </div>
+
+        <div id="resultList" class="list"></div>
+        <button id="copyResultBtn" class="primary-btn full">📋 결과 복사하기</button>
+      </section>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
