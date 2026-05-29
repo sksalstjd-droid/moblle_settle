@@ -45,3 +45,13 @@ http://0.0.0.0:5000
 - 새로고침해도 데이터가 유지됩니다.
 - 서버 DB는 아직 사용하지 않습니다.
 - 기존 Streamlit 정산기의 단순 정산 로직을 유지합니다.
+
+## Icons
+
+This project uses icons from Lucide.
+
+https://lucide.dev/
+
+License: ISC License
+
+https://github.com/lucide-icons/lucide/blob/main/LICENSE

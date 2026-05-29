@@ -1,5 +1,5 @@
 :root {
-  --bg: #f6f7f9;
+  --bg: #f8fafc;
   --card: #ffffff;
   --text: #111827;
   --muted: #6b7280;
@@ -7,7 +7,7 @@
   --blue: #3B8ED0;
   --green: #2FA572;
   --danger: #D35B5B;
-  --shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+  --shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
 }
 
 * {
@@ -41,7 +41,7 @@ button {
 .app-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 10px;
 }
 
@@ -49,7 +49,47 @@ button {
   margin: 0;
   font-size: 24px;
   line-height: 1.2;
-  font-weight: 900;
+  font-weight: 700;
+}
+
+.app-icon,
+.section-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  background: currentColor;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+}
+
+.app-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--text);
+}
+
+.section-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+}
+
+.icon-calculator {
+  mask-image: url("/static/images/calculator.svg");
+  -webkit-mask-image: url("/static/images/calculator.svg");
+}
+
+.icon-user {
+  mask-image: url("/static/images/user.svg");
+  -webkit-mask-image: url("/static/images/user.svg");
+}
+
+.icon-credit-card {
+  mask-image: url("/static/images/credit-card.svg");
+  -webkit-mask-image: url("/static/images/credit-card.svg");
 }
 
 .app-header p {
@@ -58,34 +98,49 @@ button {
   color: var(--muted);
 }
 
-.summary-grid {
+.summary-panel {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin: 10px 0 12px;
-}
-
-.summary-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 10px 6px;
-  text-align: center;
+  padding: 11px 12px;
+  margin: 10px 0 12px;
   box-shadow: var(--shadow);
+  line-height: 1.25;
 }
 
-.summary-card span {
+.summary-primary strong {
+  display: block;
+  font-size: 24px;
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.summary-primary span,
+.summary-secondary span {
   display: block;
   font-size: 11px;
   color: var(--muted);
-  font-weight: 800;
-  margin-bottom: 4px;
+  font-weight: 400;
 }
 
-.summary-card strong {
-  display: block;
-  font-size: 15px;
-  font-weight: 950;
+.summary-secondary {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+}
+
+.summary-secondary strong {
+  display: inline;
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -106,7 +161,7 @@ button {
   border-radius: 13px;
   background: transparent;
   color: var(--muted);
-  font-weight: 900;
+  font-weight: 600;
 }
 
 .tab-btn.active {
@@ -145,22 +200,25 @@ button {
 }
 
 .section-title h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
   font-size: 16px;
-  font-weight: 950;
+  font-weight: 700;
 }
 
 .section-title span {
   font-size: 12px;
   color: var(--muted);
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .field-label {
   display: block;
   font-size: 12px;
   color: var(--muted);
-  font-weight: 900;
+  font-weight: 600;
   margin: 10px 0 5px;
 }
 
@@ -171,7 +229,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 15px;
   padding: 0 14px;
-  font-weight: 950;
+  font-weight: 600;
   outline: none;
   background: #fbfcfe;
 }
@@ -186,8 +244,7 @@ button {
 }
 
 .amount-input:focus,
-.name-input:focus,
-.member-form input:focus {
+.name-input:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px rgba(59, 142, 208, 0.12);
 }
@@ -209,20 +266,19 @@ button {
   border: 1px solid transparent;
   background: #eef2f7;
   color: var(--text);
-  font-weight: 900;
+  font-weight: 600;
 }
 
 .chip.selected {
   color: white;
 }
 
-.ghost-btn,
-.member-form button {
+.ghost-btn {
   min-height: 42px;
   border-radius: 13px;
   background: #eef2f7;
   color: var(--text);
-  font-weight: 900;
+  font-weight: 600;
 }
 
 .action-row {
@@ -241,7 +297,7 @@ button {
   border-radius: 14px;
   background: var(--blue);
   color: white;
-  font-weight: 950;
+  font-weight: 700;
 }
 
 .primary-btn.full {
@@ -251,13 +307,47 @@ button {
 
 .start-over-card {
   box-shadow: none;
+  padding: 10px 12px;
+}
+
+.start-over-details summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.start-over-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.start-over-details summary::before {
+  content: "▶";
+  font-size: 11px;
+}
+
+.start-over-details[open] summary::before {
+  content: "▼";
+}
+
+.start-over-details summary span {
+  flex: 1;
+}
+
+.start-over-details summary strong {
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .start-over-text {
-  margin: 0 0 10px;
+  margin: 10px 0;
   color: var(--muted);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 400;
 }
 
 .start-over-actions {
@@ -277,59 +367,7 @@ button {
 .sub-title h3 {
   margin: 0;
   font-size: 14px;
-  font-weight: 950;
-}
-
-.member-details summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-weight: 950;
-  list-style: none;
-}
-
-.member-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.member-details summary::before {
-  content: "▶";
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.member-details[open] summary::before {
-  content: "▼";
-}
-
-.member-details summary span {
-  flex: 1;
-}
-
-.member-details summary strong {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.member-details .member-form {
-  margin-top: 12px;
-}
-
-.member-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.member-form input {
-  min-width: 0;
-  min-height: 44px;
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  padding: 0 12px;
-  outline: none;
+  font-weight: 700;
 }
 
 .list {
@@ -351,7 +389,7 @@ button {
   min-height: 42px;
   background: #fbfcfe;
   border: 1px solid var(--border);
-  border-left: 6px solid #888;
+  border-left: 4px solid #888;
   border-radius: 13px;
   padding: 7px 8px;
 }
@@ -362,7 +400,7 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-  font-weight: 950;
+  font-weight: 700;
 }
 
 .item-total {
@@ -381,12 +419,12 @@ button {
 .item-total strong {
   font-size: 15px;
   color: var(--text);
-  font-weight: 950;
+  font-weight: 700;
 }
 
 .item-amount {
   font-size: 15px;
-  font-weight: 950;
+  font-weight: 700;
   color: var(--text);
   white-space: nowrap;
 }
@@ -398,7 +436,7 @@ button {
   background: #fff1f1;
   color: var(--danger);
   font-size: 13px;
-  font-weight: 950;
+  font-weight: 600;
 }
 
 .payment-more-btn {
@@ -407,7 +445,7 @@ button {
   background: #eef2f7;
   color: var(--muted);
   font-size: 13px;
-  font-weight: 950;
+  font-weight: 600;
 }
 
 .target-grid {
@@ -425,7 +463,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 13px;
   background: #fbfcfe;
-  font-weight: 900;
+  font-weight: 600;
 }
 
 .target-card input {
@@ -450,12 +488,12 @@ button {
   gap: 6px;
   min-width: 0;
   font-size: 14px;
-  font-weight: 950;
+  font-weight: 700;
 }
 
 .transfer-amount {
   font-size: 15px;
-  font-weight: 950;
+  font-weight: 700;
   text-align: right;
   white-space: nowrap;
 }
@@ -465,7 +503,7 @@ button {
   border-radius: 14px;
   background: #fff7ed;
   color: #9a3412;
-  font-weight: 850;
+  font-weight: 600;
 }
 
 .success {
@@ -473,7 +511,7 @@ button {
   border-radius: 14px;
   background: #ecfdf5;
   color: #047857;
-  font-weight: 900;
+  font-weight: 600;
 }
 
 .danger-btn {
@@ -482,7 +520,7 @@ button {
   border-radius: 14px;
   background: var(--danger);
   color: white;
-  font-weight: 950;
+  font-weight: 600;
 }
 
 .toast {
@@ -498,7 +536,7 @@ button {
   color: white;
   text-align: center;
   font-size: 14px;
-  font-weight: 850;
+  font-weight: 600;
   opacity: 0;
   pointer-events: none;
   transition: 0.22s ease;
@@ -508,11 +546,4 @@ button {
 .toast.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
-}
-
-@media (max-width: 370px) {
-  .summary-card strong {
-    font-size: 13px;
-  }
-
 }

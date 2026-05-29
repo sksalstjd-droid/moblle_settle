@@ -9,24 +9,24 @@
 <body>
   <main class="app">
     <header class="app-header">
-      <div>
-        <h1>💸 스마트 정산기</h1>
-      </div>
+      <span class="app-icon icon-calculator" aria-hidden="true"></span>
+      <h1>스마트 정산기</h1>
     </header>
 
-    <section class="summary-grid" aria-label="정산 요약">
-      <article class="summary-card">
-        <span>총액</span>
-        <strong id="summaryTotal">0원</strong>
-      </article>
-      <article class="summary-card">
-        <span>정산 인원</span>
-        <strong id="summaryTargetCount">0명</strong>
-      </article>
-      <article class="summary-card">
-        <span>1인당</span>
+    <section class="summary-panel" aria-label="정산 요약">
+      <div class="summary-primary">
         <strong id="summaryPerHead">0원</strong>
-      </article>
+        <span>1인당</span>
+      </div>
+      <div class="summary-secondary">
+        <div>
+          <span>총액</span>
+          <strong id="summaryTotal">0원</strong>
+        </div>
+        <div>
+          <span id="summaryTargetCount">0명 · 0건</span>
+        </div>
+      </div>
     </section>
 
     <nav class="tab-bar" aria-label="화면 전환">
@@ -36,21 +36,22 @@
 
     <section id="tabInput" class="tab-page active">
       <section id="startOverCard" class="card start-over-card hidden">
-        <div class="section-title">
-          <h2>새 정산 시작</h2>
-          <span id="startOverSummary">이전 기록 있음</span>
-        </div>
-        <p class="start-over-text">이전 정산 기록이 남아 있어요.</p>
-        <div class="start-over-actions">
-          <button id="clearPaymentsBtn" class="ghost-btn">결제내역만 비우기</button>
-          <button id="resetBtn" class="danger-btn">전체 새로 시작</button>
-        </div>
+        <details class="start-over-details">
+          <summary>
+            <span>새 정산 시작</span>
+            <strong id="startOverSummary">이전 기록 있음</strong>
+          </summary>
+          <p class="start-over-text">이전 정산 기록이 남아 있어요.</p>
+          <div class="start-over-actions">
+            <button id="clearPaymentsBtn" class="ghost-btn">결제내역만 비우기</button>
+            <button id="resetBtn" class="danger-btn">전체 새로 시작</button>
+          </div>
+        </details>
       </section>
 
       <section id="quickInputCard" class="card">
         <div class="section-title">
-          <h2>💳 빠른 입력</h2>
-          <span id="selectedPayerHint">이름과 금액</span>
+          <h2>빠른 입력</h2>
         </div>
 
         <label class="field-label" for="payerInput">이름</label>
@@ -72,24 +73,22 @@
       </section>
 
       <section class="card">
-        <details class="member-details">
-          <summary>
-            <span>멤버 관리</span>
-            <strong id="memberCountBadge">0명</strong>
-          </summary>
-
-          <div class="member-form">
-            <input id="memberInput" placeholder="이름 입력" autocomplete="off" />
-            <button id="addMemberBtn">추가</button>
-          </div>
-
-          <div id="memberList" class="list"></div>
-        </details>
+        <div class="section-title">
+          <h2 class="title-with-icon">
+            <span class="section-icon icon-user" aria-hidden="true"></span>
+            멤버 관리
+          </h2>
+          <span id="memberCountBadge">0명</span>
+        </div>
+        <div id="memberList" class="list"></div>
       </section>
 
       <section class="card">
         <div class="section-title">
-          <h2>📜 최근 결제 내역</h2>
+          <h2 class="title-with-icon">
+            <span class="section-icon icon-credit-card" aria-hidden="true"></span>
+            최근 결제 내역
+          </h2>
           <span id="paymentCountBadge">0건</span>
         </div>
         <div id="paymentList" class="list"></div>
@@ -99,7 +98,7 @@
     <section id="tabResult" class="tab-page">
       <section class="card">
         <div class="section-title">
-          <h2>✅ 정산 대상자</h2>
+          <h2>정산 대상자</h2>
           <span id="targetCountBadge">0명</span>
         </div>
 
@@ -113,7 +112,7 @@
 
       <section class="card">
         <div class="section-title">
-          <h2>📊 정산 결과</h2>
+          <h2>정산 결과</h2>
           <span>자동 계산</span>
         </div>
 

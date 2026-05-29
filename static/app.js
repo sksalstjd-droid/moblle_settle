@@ -1,6 +1,6 @@
 const PALETTE = [
-  "#3B8ED0", "#2FA572", "#9B7FD4", "#E0A85F", "#5FC4C4",
-  "#D47F9B", "#E07A5F", "#7FD49B", "#D0B03B", "#7FA8D4",
+  "#4F86B8", "#3F9870", "#927DBF", "#C99658", "#62ADAD",
+  "#BE7D95", "#C97861", "#79BF91", "#B8A340", "#7D9FC2",
 ];
 
 const STORAGE_KEY = "mobile_settle_flask_state_v1";
@@ -193,7 +193,7 @@ function renderSummary() {
   const targets = getTargets();
 
   $("summaryTotal").textContent = won(total);
-  $("summaryTargetCount").textContent = `${targets.length}명`;
+  $("summaryTargetCount").textContent = `${targets.length}명 · ${state.payments.length}건`;
   $("summaryPerHead").textContent = won(perHead);
 }
 
@@ -212,12 +212,10 @@ function renderPayerButtons() {
   if (!state.names.length) {
     wrap.classList.add("empty");
     wrap.innerHTML = `<p class="empty-text">저장된 이름이 여기에 표시됩니다.</p>`;
-    $("selectedPayerHint").textContent = "이름과 금액";
     return;
   }
 
   wrap.classList.remove("empty");
-  $("selectedPayerHint").textContent = state.lastPayer ? `최근 ${state.lastPayer}` : "이름 선택 가능";
 
   state.names.forEach((name) => {
     const button = document.createElement("button");
@@ -251,7 +249,7 @@ function renderMembers() {
     card.style.borderLeftColor = colorOf(name);
 
     card.innerHTML = `
-      <div class="item-title" style="color:${colorOf(name)};">👤 ${escapeHtml(name)}</div>
+      <div class="item-title" style="color:${colorOf(name)};">${escapeHtml(name)}</div>
       <div class="item-total">
         <span>총</span>
         <strong>${won(paid[name] || 0)}</strong>
@@ -294,7 +292,7 @@ function renderPayments() {
     card.style.borderLeftColor = colorOf(payment.payer);
 
     card.innerHTML = `
-      <div class="item-title" style="color:${colorOf(payment.payer)};">💳 ${escapeHtml(payment.payer)}</div>
+      <div class="item-title" style="color:${colorOf(payment.payer)};">${escapeHtml(payment.payer)}</div>
       <div class="item-amount">${won(payment.amount)}</div>
       <button class="delete-btn">삭제</button>
     `;
@@ -406,31 +404,6 @@ function saveAndRender() {
   render();
 }
 
-function addMember() {
-  const input = $("memberInput");
-  const name = input.value.trim();
-
-  if (!name) {
-    showToast("이름을 입력해주세요.");
-    return;
-  }
-
-  if (state.names.includes(name)) {
-    showToast("이미 있는 이름이에요.");
-    return;
-  }
-
-  state.names.push(name);
-  state.targets[name] = true;
-
-  if (!state.lastPayer) {
-    state.lastPayer = name;
-  }
-
-  input.value = "";
-  saveAndRender();
-}
-
 function addPayment() {
   const name = getPayerInputName();
   const amount = parseAmount($("amountInput").value);
@@ -523,11 +496,6 @@ function escapeHtml(value) {
 function bindEvents() {
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => setTab(btn.dataset.tab));
-  });
-
-  $("addMemberBtn").addEventListener("click", addMember);
-  $("memberInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") addMember();
   });
 
   $("payerInput").addEventListener("focus", () => {
