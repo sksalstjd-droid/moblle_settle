@@ -108,6 +108,7 @@ function calcResult() {
 
   const total = state.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const perHead = Math.floor(total / targets.length);
+  const remainder = total % targets.length;
 
   const paid = Object.fromEntries(state.names.map((name) => [name, 0]));
   const owed = Object.fromEntries(state.names.map((name) => [name, 0]));
@@ -116,8 +117,9 @@ function calcResult() {
     if (p.payer in paid) paid[p.payer] += Number(p.amount || 0);
   });
 
-  targets.forEach((name) => {
-    owed[name] += perHead;
+  // 원 단위 나머지는 정산 대상자 표시 순서대로 앞에서부터 1원씩 배분한다.
+  targets.forEach((name, index) => {
+    owed[name] += perHead + (index < remainder ? 1 : 0);
   });
 
   const senders = [];
@@ -316,8 +318,14 @@ function renderPayments() {
 function renderTargets() {
   const list = $("targetList");
   const targets = getTargets();
+  const totalCount = state.names.length;
+  const targetCount = targets.length;
+  const allSelected = totalCount > 0 && targetCount === totalCount;
+  const allToggleButton = $("targetAllToggleBtn");
 
-  $("targetCountBadge").textContent = `${targets.length}명`;
+  $("targetCountBadge").textContent = `${targetCount}/${totalCount}명`;
+  allToggleButton.textContent = allSelected ? "모두 제외" : "모두 포함";
+  allToggleButton.disabled = totalCount === 0;
   list.innerHTML = "";
 
   if (!state.names.length) {
@@ -326,22 +334,21 @@ function renderTargets() {
   }
 
   state.names.forEach((name) => {
-    const label = document.createElement("label");
-    label.className = "target-card";
-
     const checked = state.targets[name] !== false;
+    const button = document.createElement("button");
 
-    label.innerHTML = `
-      <input type="checkbox" ${checked ? "checked" : ""} />
-      <span style="color:${checked ? colorOf(name) : "#6b7280"};">${escapeHtml(name)}</span>
-    `;
+    button.className = `target-chip ${checked ? "active" : "inactive"}`;
+    button.textContent = name;
+    if (checked) {
+      button.style.borderColor = colorOf(name);
+    }
 
-    label.querySelector("input").addEventListener("change", (event) => {
-      state.targets[name] = event.target.checked;
+    button.addEventListener("click", () => {
+      state.targets[name] = !checked;
       saveAndRender();
     });
 
-    list.appendChild(label);
+    list.appendChild(button);
   });
 }
 
@@ -398,6 +405,31 @@ function saveAndRender() {
   normalizeState();
   saveState();
   render();
+}
+
+function addMember() {
+  const input = $("memberInput");
+  const name = input.value.trim();
+
+  if (!name) {
+    showToast("이름을 입력해주세요.");
+    return;
+  }
+
+  if (state.names.includes(name)) {
+    showToast("이미 있는 이름이에요.");
+    return;
+  }
+
+  state.names.push(name);
+  state.targets[name] = true;
+
+  if (!state.lastPayer) {
+    state.lastPayer = name;
+  }
+
+  input.value = "";
+  saveAndRender();
 }
 
 function addPayment() {
@@ -503,6 +535,11 @@ function bindEvents() {
     btn.addEventListener("click", () => setTab(btn.dataset.tab));
   });
 
+  $("addMemberBtn").addEventListener("click", addMember);
+  $("memberInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") addMember();
+  });
+
   $("payerInput").addEventListener("focus", () => {
     keepQuickInputVisible();
     $("payerInput").value = "";
@@ -521,17 +558,14 @@ function bindEvents() {
   $("savePaymentBtn").addEventListener("click", addPayment);
   $("clearPaymentsBtn").addEventListener("click", clearPaymentsOnly);
 
-  $("selectAllBtn").addEventListener("click", () => {
-    state.names.forEach((name) => {
-      state.targets[name] = true;
-    });
-    saveAndRender();
-  });
+  $("targetAllToggleBtn").addEventListener("click", () => {
+    const targets = getTargets();
+    const allSelected = state.names.length > 0 && targets.length === state.names.length;
 
-  $("clearAllBtn").addEventListener("click", () => {
     state.names.forEach((name) => {
-      state.targets[name] = false;
+      state.targets[name] = !allSelected;
     });
+
     saveAndRender();
   });
 

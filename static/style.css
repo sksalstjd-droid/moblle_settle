@@ -240,7 +240,8 @@ button {
 }
 
 .amount-input:focus,
-.name-input:focus {
+.name-input:focus,
+.member-form input:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px rgba(59, 142, 208, 0.12);
 }
@@ -269,7 +270,8 @@ button {
   color: white;
 }
 
-.ghost-btn {
+.ghost-btn,
+.member-form button {
   min-height: 42px;
   border-radius: 13px;
   background: #eef2f7;
@@ -353,17 +355,53 @@ button {
 }
 
 .quick-name-area {
-  margin-top: 14px;
+  margin-top: 10px;
 }
 
 .sub-title {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .sub-title h3 {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
+}
+
+#payerButtons {
+  gap: 6px;
+}
+
+#payerButtons .chip {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 999px;
+}
+
+.member-add-area {
+  margin-bottom: 10px;
+}
+
+.member-add-area .field-label {
+  margin-top: 0;
+}
+
+.member-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px;
+  gap: 8px;
+}
+
+.member-form input {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  padding: 0 12px;
+  outline: none;
+  background: #fbfcfe;
 }
 
 .list {
@@ -444,27 +482,59 @@ button {
   font-weight: 600;
 }
 
-.target-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-}
-
-.target-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 42px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  background: #fbfcfe;
+.target-all-toggle {
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--blue);
+  font-size: 13px;
   font-weight: 600;
 }
 
-.target-card input {
-  width: 18px;
-  height: 18px;
+.target-all-toggle:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.target-chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fbfcfe;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.target-chip::after {
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+}
+
+.target-chip.active::after {
+  content: "✓";
+}
+
+.target-chip.inactive {
+  background: #f3f4f6;
+  border-color: #e5e7eb;
+  color: var(--muted);
+}
+
+.target-chip.inactive::after {
+  content: "✕";
 }
 
 .transfer-row {
