@@ -152,21 +152,51 @@ function calcResult() {
 function buildCopyText() {
   const { total, perHead, transfers } = calcResult();
   const targets = getTargets();
+  const excludedNames = state.names.filter((name) => state.targets[name] === false);
 
   const lines = [
-    "💸 정산 결과",
-    "========================",
-    `총액     : ${won(total)}`,
-    `1인당    : ${won(perHead)}  (${targets.length}명 기준)`,
-    "========================",
+    "🧾 정산 결과",
+    "",
+    `총액: ${won(total)}`,
+    `1인당: ${won(perHead)} (${targets.length}명 기준)`,
   ];
 
+  if (excludedNames.length > 0) {
+    lines.push(`정산 제외: ${excludedNames.join(", ")}`);
+  }
+
   if (transfers.length) {
+    const grouped = [];
+    const groupMap = new Map();
+
     transfers.forEach(([sender, receiver, amount]) => {
-      lines.push(`  ${sender}  →  ${receiver}  :  ${won(amount)}`);
+      if (!groupMap.has(sender)) {
+        const group = { sender, total: 0, items: [] };
+        groupMap.set(sender, group);
+        grouped.push(group);
+      }
+
+      const group = groupMap.get(sender);
+      group.total += amount;
+      group.items.push({ receiver, amount });
+    });
+
+    lines.push("", "[보낼 돈]");
+
+    grouped.forEach((group) => {
+      if (group.items.length === 1) {
+        const { receiver, amount } = group.items[0];
+        lines.push("", `[${group.sender}] ${receiver} ${won(amount)}`);
+        return;
+      }
+
+      lines.push("", `[${group.sender}] 총 ${won(group.total)}`);
+      group.items.forEach(({ receiver, amount }) => {
+        lines.push(`- ${receiver} ${won(amount)}`);
+      });
     });
   } else {
-    lines.push("  정산 내역 없음 🍯");
+    lines.push("", "정산할 내역 없음");
   }
 
   return lines.join("\n");
