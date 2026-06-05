@@ -186,13 +186,13 @@ function buildCopyText() {
     grouped.forEach((group) => {
       if (group.items.length === 1) {
         const { receiver, amount } = group.items[0];
-        lines.push("", `[${group.sender}] ${receiver} ${won(amount)}`);
+        lines.push("", `[${group.sender}] → ${receiver} ${won(amount)}`);
         return;
       }
 
       lines.push("", `[${group.sender}] 총 ${won(group.total)}`);
       group.items.forEach(({ receiver, amount }) => {
-        lines.push(`- ${receiver} ${won(amount)}`);
+        lines.push(`→ ${receiver} ${won(amount)}`);
       });
     });
   } else {
