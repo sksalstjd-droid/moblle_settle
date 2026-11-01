@@ -54,7 +54,7 @@ test("개발 모드에서만 모바일 Live Reload 스크립트와 변경 지문
     "page = client.get('/')",
     "revision = client.get('/__dev/revision')",
     "static = client.get('/static/app.js')",
-    "print(json.dumps({'enabled': app.config['DEV_LIVE_RELOAD'], 'html': page.get_data(as_text=True), 'revision_status': revision.status_code, 'revision': revision.get_json(silent=True), 'cache_control': revision.headers.get('Cache-Control', ''), 'static_cache_control': static.headers.get('Cache-Control', '')}))",
+    "print(json.dumps({'enabled': app.config['DEV_LIVE_RELOAD'], 'template_reload': app.config['TEMPLATES_AUTO_RELOAD'], 'html': page.get_data(as_text=True), 'revision_status': revision.status_code, 'revision': revision.get_json(silent=True), 'cache_control': revision.headers.get('Cache-Control', ''), 'static_cache_control': static.headers.get('Cache-Control', '')}))",
   ].join("; ")], {
     cwd: path.join(__dirname, ".."),
     encoding: "utf8",
@@ -63,6 +63,7 @@ test("개발 모드에서만 모바일 Live Reload 스크립트와 변경 지문
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.enabled, true);
+  assert.equal(payload.template_reload, true);
   assert.match(payload.html, /static\/dev-live-reload\.js/);
   assert.match(payload.html, /data-server-id="\d+"/);
   assert.equal(payload.revision_status, 200);
@@ -79,7 +80,7 @@ test("Render 환경에서는 개발 Live Reload 경로를 비활성화한다", (
     "client = app.test_client()",
     "page = client.get('/')",
     "revision = client.get('/__dev/revision')",
-    "print(json.dumps({'enabled': app.config['DEV_LIVE_RELOAD'], 'html': page.get_data(as_text=True), 'revision_status': revision.status_code}))",
+    "print(json.dumps({'enabled': app.config['DEV_LIVE_RELOAD'], 'template_reload': app.config['TEMPLATES_AUTO_RELOAD'], 'html': page.get_data(as_text=True), 'revision_status': revision.status_code}))",
   ].join("; ")], {
     cwd: path.join(__dirname, ".."),
     encoding: "utf8",
@@ -88,6 +89,7 @@ test("Render 환경에서는 개발 Live Reload 경로를 비활성화한다", (
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.enabled, false);
+  assert.equal(payload.template_reload, false);
   assert.doesNotMatch(payload.html, /static\/dev-live-reload\.js/);
   assert.equal(payload.revision_status, 404);
 });

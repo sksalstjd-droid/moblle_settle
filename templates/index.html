@@ -60,15 +60,13 @@
               <label class="field-label" for="payerInput">이름</label>
               <input id="payerInput" class="name-input" name="settlement-member-query" type="text" placeholder="이름" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="quickInputFeedback" />
             </div>
-            <div class="quick-input-row">
-              <div class="quick-input-field">
-                <label class="field-label" for="amountInput">금액</label>
-                <input id="amountInput" class="amount-input" name="settlement-amount" type="text" inputmode="numeric" pattern="[0-9,]*" placeholder="0" autocomplete="off" aria-describedby="quickInputFeedback" />
-              </div>
-              <div class="quick-input-field">
-                <label class="field-label" for="placeInput">사용처 (선택)</label>
-                <input id="placeInput" class="place-input" name="settlement-place" type="text" placeholder="예: 식당, 카페" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="quickInputFeedback" />
-              </div>
+            <div class="quick-input-field">
+              <label class="field-label" for="amountInput">금액</label>
+              <input id="amountInput" class="amount-input" name="settlement-amount" type="text" inputmode="numeric" pattern="[0-9,]*" placeholder="0" autocomplete="off" aria-describedby="quickInputFeedback" />
+            </div>
+            <div class="quick-input-field">
+              <label class="field-label" for="placeInput">사용처 (선택)</label>
+              <input id="placeInput" class="place-input" name="settlement-place" type="text" placeholder="예: 식당, 카페" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="quickInputFeedback" />
             </div>
           </div>
 
@@ -78,7 +76,7 @@
 
         <div class="quick-name-area">
           <div class="section-title sub-title">
-            <h3>빠른 이름 선택</h3>
+            <h3>이름 선택</h3>
           </div>
           <div id="payerButtons" class="chip-wrap empty">
             <p class="empty-text">저장된 이름이 여기에 표시됩니다.</p>
@@ -156,6 +154,17 @@
     </section>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="confirmDialog" class="confirm-dialog" hidden>
+      <section class="confirm-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="confirmDialogTitle" aria-describedby="confirmDialogMessage confirmDialogDetail">
+        <h2 id="confirmDialogTitle" class="confirm-dialog-title"></h2>
+        <p id="confirmDialogMessage" class="confirm-dialog-message"></p>
+        <p id="confirmDialogDetail" class="confirm-dialog-detail"></p>
+        <div class="confirm-dialog-actions">
+          <button id="confirmCancelBtn" class="ghost-btn" type="button">취소</button>
+          <button id="confirmActionBtn" class="confirm-delete-btn" type="button">삭제</button>
+        </div>
+      </section>
+    </div>
   </main>
 
   <script src="{{ url_for('static', filename='settlement-core.js') }}"></script>

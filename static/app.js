@@ -40,6 +40,10 @@ let preparedShare = null;
 let quickInputFocused = false;
 let quickVisibilityFrame = null;
 let quickSavedPayer = null;
+let confirmReturnFocus = null;
+let confirmFallbackFocus = null;
+let confirmAction = null;
+let confirmBusy = false;
 
 function saveState() {
   const result = saveStateToStorage(localStorage, STORAGE_KEY, state);
@@ -341,7 +345,7 @@ function renderSummary(calculation) {
   $("summaryPrimaryLabel").textContent = "총 결제액";
   $("summaryPerHead").textContent = won(total);
   $("summarySecondaryLabel").textContent = "정산";
-  $("summaryTotal").textContent = "맞춤 포함";
+  $("summaryTotal").textContent = "";
   $("summaryTargetCount").textContent = `${state.payments.length}건 · 예외 ${customCount}건`;
 }
 
@@ -396,29 +400,38 @@ function renderMembers() {
     card.innerHTML = `
       <div class="item-title" style="color:${colorOf(name)};">${escapeHtml(name)}</div>
       <div class="item-total">
-        <span>총</span>
+        <span>결제</span>
         <strong>${won(paid[name] || 0)}</strong>
       </div>
       <button class="delete-btn">삭제</button>
     `;
 
     card.querySelector("button").addEventListener("click", () => {
-      if (!confirm(`${name}님을 삭제할까요?\n해당 멤버의 결제 내역도 함께 삭제됩니다.`)) return;
-      const result = removeMember(state, name);
-      if (!result.ok) {
-        if (result.reason === "empty-custom-participants") {
-          const payment = result.blockingPayments[0];
-          const label = payment.place || `${payment.payer} · ${won(payment.amount)}`;
-          showToast(`삭제할 수 없어요. 예외 결제 '${label}'의 유일한 부담자예요.`);
-        }
-        return;
-      }
-      state = result.state;
-      if (!state.payments.some((payment) => payment.id === editingPaymentId)) editingPaymentId = null;
-      if (!state.payments.some((payment) => payment.id === exceptionEditingPaymentId)) {
-        exceptionEditingPaymentId = null;
-      }
-      saveAndRender();
+      openConfirmDialog({
+        title: "멤버 삭제",
+        message: "이 멤버를 삭제할까요?",
+        detail: `${name}\n이 멤버가 결제한 내역도 함께 삭제됩니다.`,
+        actionLabel: "삭제",
+        fallbackFocus: list,
+        onConfirm: () => {
+          const result = removeMember(state, name);
+          if (!result.ok) {
+            if (result.reason === "empty-custom-participants") {
+              const payment = result.blockingPayments[0];
+              const label = payment.place || `${payment.payer} · ${won(payment.amount)}`;
+              showToast(`삭제할 수 없어요. '${label}' 결제에 이 멤버만 비용을 나눠 부담하도록 설정돼 있어요.`);
+            }
+            return false;
+          }
+          return commitState(result.state, () => {
+            if (!state.payments.some((payment) => payment.id === editingPaymentId)) editingPaymentId = null;
+            if (!state.payments.some((payment) => payment.id === exceptionEditingPaymentId)) {
+              exceptionEditingPaymentId = null;
+            }
+            showToast("멤버를 삭제했어요.");
+          });
+        },
+      });
     });
 
     list.appendChild(card);
@@ -439,6 +452,82 @@ function cancelPaymentEdit() {
   renderPayments();
 }
 
+function openConfirmDialog(options) {
+  if (confirmAction || confirmBusy) return;
+  const dialog = $("confirmDialog");
+  confirmReturnFocus = document.activeElement;
+  confirmFallbackFocus = options.fallbackFocus || $("tabInput");
+  confirmAction = options.onConfirm;
+  $("confirmDialogTitle").textContent = options.title;
+  $("confirmDialogMessage").textContent = options.message;
+  const detail = $("confirmDialogDetail");
+  detail.textContent = options.detail || "";
+  detail.hidden = !options.detail;
+  const actionButton = $("confirmActionBtn");
+  actionButton.textContent = options.actionLabel || "삭제";
+  actionButton.disabled = false;
+  $("confirmCancelBtn").disabled = false;
+  dialog.hidden = false;
+  $("confirmCancelBtn").focus();
+}
+
+function closeConfirmDialog() {
+  const dialog = $("confirmDialog");
+  if (dialog.hidden) return;
+  dialog.hidden = true;
+  confirmAction = null;
+  confirmBusy = false;
+  $("confirmActionBtn").disabled = false;
+  $("confirmCancelBtn").disabled = false;
+  const focusTarget = confirmReturnFocus?.isConnected ? confirmReturnFocus : confirmFallbackFocus;
+  if (focusTarget?.isConnected) {
+    if (focusTarget === confirmFallbackFocus) focusTarget.tabIndex = -1;
+    focusTarget.focus();
+  }
+  confirmReturnFocus = null;
+  confirmFallbackFocus = null;
+}
+
+function confirmDialogAction() {
+  if (confirmBusy || typeof confirmAction !== "function") return;
+  confirmBusy = true;
+  $("confirmActionBtn").disabled = true;
+  $("confirmCancelBtn").disabled = true;
+  try {
+    confirmAction();
+  } catch {
+    showToast("작업을 완료하지 못했어요. 다시 시도해주세요.");
+  }
+  closeConfirmDialog();
+}
+
+function bindConfirmDialog() {
+  const dialog = $("confirmDialog");
+  $("confirmCancelBtn").addEventListener("click", closeConfirmDialog);
+  $("confirmActionBtn").addEventListener("click", confirmDialogAction);
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) closeConfirmDialog();
+  });
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeConfirmDialog();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const buttons = [$("confirmCancelBtn"), $("confirmActionBtn")].filter((button) => !button.disabled);
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+}
+
 function savePaymentEdit(paymentId, panel) {
   const payer = panel.querySelector(".payment-edit-name").value.trim();
   const amount = parseAmount(panel.querySelector(".payment-edit-amount").value);
@@ -450,9 +539,15 @@ function savePaymentEdit(paymentId, panel) {
     return;
   }
 
+  const saved = saveStateToStorage(localStorage, STORAGE_KEY, result.state);
+  if (!saved.ok) {
+    showToast("저장하지 못했어요. 수정 내용을 확인한 뒤 다시 시도해주세요.");
+    return;
+  }
   state = result.state;
   editingPaymentId = null;
-  saveAndRender();
+  invalidateShareImage();
+  render();
   showToast("결제 내역을 수정했어요.");
 }
 
@@ -461,16 +556,20 @@ function createPaymentEditPanel(payment) {
   panel.className = "payment-edit-panel";
   panel.dataset.editPaymentId = payment.id;
 
-  const fields = document.createElement("div");
-  fields.className = "payment-edit-fields";
+  const firstRow = document.createElement("div");
+  firstRow.className = "payment-edit-row payment-edit-row-primary";
+  const secondRow = document.createElement("div");
+  secondRow.className = "payment-edit-row payment-edit-row-secondary";
 
   const nameInput = document.createElement("input");
   nameInput.className = "payment-edit-input payment-edit-name";
+  nameInput.id = `edit-payer-${payment.id}`;
   nameInput.value = payment.payer;
   nameInput.placeholder = "결제자";
 
   const amountInput = document.createElement("input");
   amountInput.className = "payment-edit-input payment-edit-amount";
+  amountInput.id = `edit-amount-${payment.id}`;
   amountInput.value = payment.amount.toLocaleString("ko-KR");
   amountInput.placeholder = "금액";
   amountInput.inputMode = "numeric";
@@ -481,10 +580,23 @@ function createPaymentEditPanel(payment) {
 
   const placeInput = document.createElement("input");
   placeInput.className = "payment-edit-input payment-edit-place";
+  placeInput.id = `edit-place-${payment.id}`;
   placeInput.value = payment.place;
   placeInput.placeholder = "사용처 (선택)";
 
-  fields.append(nameInput, amountInput, placeInput);
+  function editField(labelText, input) {
+    const field = document.createElement("div");
+    field.className = "payment-edit-field";
+    const label = document.createElement("label");
+    label.className = "payment-edit-label";
+    label.htmlFor = input.id;
+    label.textContent = labelText;
+    field.append(label, input);
+    return field;
+  }
+
+  firstRow.append(editField("이름", nameInput), editField("금액", amountInput));
+  secondRow.append(editField("사용처", placeInput));
 
   const actions = document.createElement("div");
   actions.className = "payment-edit-actions";
@@ -494,9 +606,10 @@ function createPaymentEditPanel(payment) {
   cancelButton.addEventListener("click", cancelPaymentEdit);
   const saveButton = document.createElement("button");
   saveButton.className = "small-btn primary";
-  saveButton.textContent = "수정 저장";
+  saveButton.textContent = "저장";
   saveButton.addEventListener("click", () => savePaymentEdit(payment.id, panel));
   actions.append(cancelButton, saveButton);
+  secondRow.appendChild(actions);
 
   [nameInput, amountInput, placeInput].forEach((input) => {
     input.addEventListener("keydown", (event) => {
@@ -505,7 +618,7 @@ function createPaymentEditPanel(payment) {
     });
   });
 
-  panel.append(fields, actions);
+  panel.append(firstRow, secondRow);
   return panel;
 }
 
@@ -530,11 +643,10 @@ function renderPayments() {
     card.className = "item-card";
     card.style.borderLeftColor = colorOf(payment.payer);
 
-    const customBadge = payment.participantMode === "custom" ? `<span class="custom-badge">예외</span>` : "";
     const placeMeta = payment.place ? `<div class="item-meta">${escapeHtml(payment.place)}</div>` : "";
     card.innerHTML = `
       <div class="item-main">
-        <div class="item-title" style="color:${colorOf(payment.payer)};">${escapeHtml(payment.payer)}${customBadge}</div>
+        <div class="item-title" style="color:${colorOf(payment.payer)};">${escapeHtml(payment.payer)}</div>
         ${placeMeta}
       </div>
       <div class="item-amount">${won(payment.amount)}</div>
@@ -546,12 +658,23 @@ function renderPayments() {
 
     card.querySelector(".edit-btn").addEventListener("click", () => startPaymentEdit(payment.id));
     card.querySelector(".delete-btn").addEventListener("click", () => {
-      state.payments = state.payments.filter((item) => item.id !== payment.id);
-      if (editingPaymentId === payment.id) editingPaymentId = null;
-      if (exceptionEditingPaymentId === payment.id) {
-        exceptionEditingPaymentId = null;
-      }
-      saveAndRender();
+      const detailLines = [`${payment.payer} · ${won(payment.amount)}`];
+      if (payment.place) detailLines.push(payment.place);
+      openConfirmDialog({
+        title: "결제 내역 삭제",
+        message: "이 결제 내역을 삭제할까요?",
+        detail: detailLines.join("\n"),
+        actionLabel: "삭제",
+        fallbackFocus: list,
+        onConfirm: () => commitState({
+          ...state,
+          payments: state.payments.filter((item) => item.id !== payment.id),
+        }, () => {
+          if (editingPaymentId === payment.id) editingPaymentId = null;
+          if (exceptionEditingPaymentId === payment.id) exceptionEditingPaymentId = null;
+          showToast("결제 내역을 삭제했어요.");
+        }),
+      });
     });
 
     list.appendChild(card);
@@ -803,7 +926,7 @@ function saveAndRender() {
   render();
 }
 
-function commitState(nextState) {
+function commitState(nextState, onSuccess) {
   const result = saveStateToStorage(localStorage, STORAGE_KEY, nextState);
   if (!result.ok) {
     showToast("저장하지 못했어요. 변경 전 상태를 유지합니다.");
@@ -811,6 +934,7 @@ function commitState(nextState) {
     return false;
   }
   state = nextState;
+  if (typeof onSuccess === "function") onSuccess();
   invalidateShareImage();
   render();
   return true;
@@ -960,6 +1084,8 @@ function escapeHtml(value) {
 }
 
 function bindEvents() {
+  bindConfirmDialog();
+
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => setTab(btn.dataset.tab));
   });

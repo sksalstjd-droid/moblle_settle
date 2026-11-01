@@ -14,6 +14,7 @@ def create_app():
     # Development tooling is explicit opt-in and is disabled on Render.
     dev_live_reload = _enabled(os.getenv("SETTLE_DEV")) and not _enabled(os.getenv("RENDER"))
     app.config["DEV_LIVE_RELOAD"] = dev_live_reload
+    app.config["TEMPLATES_AUTO_RELOAD"] = dev_live_reload
     app.config["DEV_SERVER_ID"] = str(os.getpid()) if dev_live_reload else None
 
     @app.context_processor
