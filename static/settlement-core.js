@@ -209,9 +209,14 @@
     const payment = state.payments.find((item) => item.id === paymentId);
     if (!payment) return { ok: false, reason: "missing-payment" };
     const requested = new Set(Array.isArray(participantNames) ? participantNames : []);
-    const participants = state.names.filter((name) => requested.has(name));
+    const participants = state.names.filter((name) => requested.has(name) && state.targets[name] !== false);
     if (participants.length === 0) return { ok: false, reason: "empty-custom-participants" };
-    const updatedPayment = { ...payment, participantMode: "custom", participants };
+    const activeTargets = state.names.filter((name) => state.targets[name] !== false);
+    const isDefaultSet = participants.length === activeTargets.length
+      && participants.every((name) => activeTargets.includes(name));
+    const updatedPayment = isDefaultSet
+      ? { ...payment, participantMode: "default", participants: null }
+      : { ...payment, participantMode: "custom", participants };
     return {
       ok: true,
       payment: updatedPayment,
@@ -220,6 +225,29 @@
         payments: state.payments.map((item) => item.id === paymentId ? updatedPayment : item),
       },
     };
+  }
+
+  function setGlobalTargets(state, targetNames) {
+    const requested = new Set(Array.isArray(targetNames) ? targetNames : []);
+    const targets = Object.fromEntries(state.names.map((name) => [name, requested.has(name)]));
+    if (state.names.length && !state.names.some((name) => targets[name])) {
+      return { ok: false, reason: "empty-global-targets", blockingPayments: [] };
+    }
+
+    const payments = state.payments.map((payment) => {
+      if (payment.participantMode !== "custom") return { ...payment };
+      const participants = state.names.filter((name) => (
+        targets[name] && payment.participants.includes(name)
+      ));
+      return { ...payment, participants };
+    });
+    const blockingPayments = payments.filter((payment) => (
+      payment.participantMode === "custom" && payment.participants.length === 0
+    ));
+    if (blockingPayments.length) {
+      return { ok: false, reason: "empty-custom-participants", blockingPayments };
+    }
+    return { ok: true, state: { ...state, targets, payments }, blockingPayments: [] };
   }
 
   function resetPaymentParticipants(state, paymentId) {
@@ -344,11 +372,10 @@
         sourceParticipants.forEach((rawName) => {
           if (typeof rawName === "string" && seenNames.has(rawName.trim())) selected.add(rawName.trim());
         });
-        participants = names.filter((name) => selected.has(name));
+        participants = names.filter((name) => selected.has(name) && targets[name] !== false);
 
         if (participants.length === 0) {
-          addIssue(issues, "empty-custom-participants", "부담자가 없는 예외 결제를 제외했습니다.", { index, id });
-          return;
+          addIssue(issues, "empty-custom-participants", "전역 정산 대상자 중 부담자가 없는 예외 결제입니다.", { index, id });
         }
         if (participants.length !== sourceParticipants.length) {
           addIssue(issues, "invalid-custom-participants", "예외 결제의 부담자 목록을 정리했습니다.", { index, id });
@@ -419,7 +446,9 @@
     state.payments
       .filter((payment) => payment.participantMode === "custom")
       .forEach((payment) => {
-        const participants = names.filter((name) => payment.participants.includes(name));
+        const participants = names.filter((name) => (
+          state.targets[name] !== false && payment.participants.includes(name)
+        ));
         if (participants.length === 0) {
           errors.push({ code: "empty-custom-participants", paymentId: payment.id, message: "예외 결제의 정산 대상자가 없습니다." });
           return;
@@ -517,6 +546,7 @@
     updatePayment,
     setCustomParticipants,
     resetPaymentParticipants,
+    setGlobalTargets,
     normalizeStateData,
     calculateSettlement,
     removeMember,

@@ -15,7 +15,7 @@ const {
   storeMemberAddition,
   updatePayment,
   setCustomParticipants,
-  resetPaymentParticipants,
+  setGlobalTargets,
   normalizeStateData,
   calculateSettlement,
   removeMember,
@@ -36,7 +36,6 @@ let showAllPayments = false;
 let startupStorageMessage = "";
 let editingPaymentId = null;
 let exceptionEditingPaymentId = null;
-let exceptionDraftParticipants = null;
 let preparedShare = null;
 let quickInputFocused = false;
 let quickVisibilityFrame = null;
@@ -418,7 +417,6 @@ function renderMembers() {
       if (!state.payments.some((payment) => payment.id === editingPaymentId)) editingPaymentId = null;
       if (!state.payments.some((payment) => payment.id === exceptionEditingPaymentId)) {
         exceptionEditingPaymentId = null;
-        exceptionDraftParticipants = null;
       }
       saveAndRender();
     });
@@ -552,7 +550,6 @@ function renderPayments() {
       if (editingPaymentId === payment.id) editingPaymentId = null;
       if (exceptionEditingPaymentId === payment.id) {
         exceptionEditingPaymentId = null;
-        exceptionDraftParticipants = null;
       }
       saveAndRender();
     });
@@ -602,8 +599,9 @@ function renderTargets() {
     }
 
     button.addEventListener("click", () => {
-      state.targets[name] = !checked;
-      saveAndRender();
+      const nextTargets = getTargets().filter((member) => member !== name);
+      if (!checked) nextTargets.push(name);
+      applyGlobalTargets(nextTargets);
     });
 
     list.appendChild(button);
@@ -611,46 +609,62 @@ function renderTargets() {
 }
 
 function openExceptionEditor(payment) {
-  exceptionEditingPaymentId = payment.id;
-  exceptionDraftParticipants = new Set(
-    payment.participantMode === "custom" ? payment.participants : getTargets(),
-  );
+  exceptionEditingPaymentId = exceptionEditingPaymentId === payment.id ? null : payment.id;
   renderExceptions();
 }
 
-function closeExceptionEditor() {
-  exceptionEditingPaymentId = null;
-  exceptionDraftParticipants = null;
+function applyGlobalTargets(targetNames) {
+  const result = setGlobalTargets(state, targetNames);
+  if (!result.ok) {
+    if (result.reason === "empty-global-targets") {
+      showToast("전역 정산 대상자는 한 명 이상 포함해야 해요.");
+    } else {
+      const payment = result.blockingPayments[0];
+      const label = payment ? (payment.place || payment.payer) : "결제";
+      const excludedName = getTargets().find((name) => !targetNames.includes(name));
+      showToast("'" + (excludedName || "선택한 멤버") + "' 제외 시 '" + label + "' 결제의 부담자가 0명이 됩니다.");
+      markBlockedException(payment && payment.id);
+    }
+    renderTargets();
+    return false;
+  }
+  return commitState(result.state);
+}
+
+function markBlockedException(paymentId) {
+  if (!paymentId) return;
+  exceptionEditingPaymentId = paymentId;
   renderExceptions();
+  const row = $("exceptionPaymentList").querySelector('[data-payment-id="' + CSS.escape(paymentId) + '"]');
+  if (!row) return;
+  row.classList.add("blocked");
+  window.setTimeout(() => row.classList.remove("blocked"), 800);
 }
 
-function applyExceptionDraft() {
-  const participants = state.names.filter((name) => exceptionDraftParticipants.has(name));
-  const result = setCustomParticipants(state, exceptionEditingPaymentId, participants);
-  if (!result.ok) {
-    showToast(result.reason === "empty-custom-participants"
-      ? "부담자를 한 명 이상 선택해주세요."
-      : "결제 내역을 찾을 수 없어요.");
+function togglePaymentParticipant(payment, name, button) {
+  if (state.targets[name] === false) return;
+  const current = payment.participantMode === "custom"
+    ? payment.participants.filter((member) => state.targets[member] !== false)
+    : getTargets();
+  const selected = new Set(current);
+  if (selected.has(name)) selected.delete(name);
+  else selected.add(name);
+  if (selected.size === 0) {
+    button.classList.add("blocked");
+    button.setAttribute("aria-invalid", "true");
+    window.setTimeout(() => {
+      button.classList.remove("blocked");
+      button.removeAttribute("aria-invalid");
+    }, 800);
+    showToast("부담자는 한 명 이상 선택해야 해요.");
     return;
   }
-  state = result.state;
-  exceptionEditingPaymentId = null;
-  exceptionDraftParticipants = null;
-  saveAndRender();
-  showToast("결제별 부담자를 적용했어요.");
-}
-
-function resetExceptionToDefault() {
-  const result = resetPaymentParticipants(state, exceptionEditingPaymentId);
+  const result = setCustomParticipants(state, payment.id, state.names.filter((member) => selected.has(member)));
   if (!result.ok) {
-    showToast("결제 내역을 찾을 수 없어요.");
+    showToast("부담자 설정을 저장하지 못했어요.");
     return;
   }
-  state = result.state;
-  exceptionEditingPaymentId = null;
-  exceptionDraftParticipants = null;
-  saveAndRender();
-  showToast("기본 정산으로 되돌렸어요.");
+  commitState(result.state);
 }
 
 function renderExceptions() {
@@ -664,11 +678,6 @@ function renderExceptions() {
   const selectedPayment = state.payments.find((payment) => payment.id === exceptionEditingPaymentId);
   if (!selectedPayment) {
     exceptionEditingPaymentId = null;
-    exceptionDraftParticipants = null;
-  } else {
-    exceptionDraftParticipants = new Set(
-      state.names.filter((name) => exceptionDraftParticipants && exceptionDraftParticipants.has(name)),
-    );
   }
 
   if (!state.payments.length) {
@@ -679,6 +688,7 @@ function renderExceptions() {
   state.payments.slice().reverse().forEach((payment) => {
     const button = document.createElement("button");
     button.className = `exception-payment-btn ${payment.id === exceptionEditingPaymentId ? "selected" : ""}`;
+    button.dataset.paymentId = payment.id;
     const label = document.createElement("span");
     label.textContent = payment.place ? `${payment.payer} · ${payment.place}` : payment.payer;
     if (payment.participantMode === "custom") {
@@ -705,38 +715,27 @@ function renderExceptions() {
   chips.className = "target-chip-wrap";
 
   state.names.forEach((name) => {
-    const checked = exceptionDraftParticipants.has(name);
+    const locked = state.targets[name] === false;
+    const selected = selectedPayment.participantMode === "custom"
+      ? selectedPayment.participants.includes(name)
+      : !locked;
+    const checked = selected && !locked;
     const button = document.createElement("button");
-    button.className = `target-chip ${checked ? "active" : "inactive"}`;
-    button.textContent = name;
+    button.className = `target-chip ${locked ? "locked" : checked ? "active" : "inactive"}`;
+    button.textContent = locked ? `${name} · 전체 정산 제외 🔒` : name;
+    button.disabled = locked;
+    button.setAttribute("aria-pressed", String(checked));
+    if (locked) button.title = "전역 정산에서 제외되어 이 결제에서도 선택할 수 없어요.";
     if (checked) button.style.borderColor = colorOf(name);
     button.addEventListener("click", () => {
-      if (checked) exceptionDraftParticipants.delete(name);
-      else exceptionDraftParticipants.add(name);
-      renderExceptions();
+      togglePaymentParticipant(selectedPayment, name, button);
     });
     chips.appendChild(button);
   });
-
-  const actions = document.createElement("div");
-  actions.className = "exception-actions";
-  if (selectedPayment.participantMode === "custom") {
-    const defaultButton = document.createElement("button");
-    defaultButton.className = "small-btn";
-    defaultButton.textContent = "기본 정산으로 되돌리기";
-    defaultButton.addEventListener("click", resetExceptionToDefault);
-    actions.appendChild(defaultButton);
-  }
-  const cancelButton = document.createElement("button");
-  cancelButton.className = "small-btn";
-  cancelButton.textContent = "취소";
-  cancelButton.addEventListener("click", closeExceptionEditor);
-  const applyButton = document.createElement("button");
-  applyButton.className = "small-btn primary";
-  applyButton.textContent = "적용";
-  applyButton.addEventListener("click", applyExceptionDraft);
-  actions.append(cancelButton, applyButton);
-  card.append(title, chips, actions);
+  const hint = document.createElement("p");
+  hint.className = "exception-editor-hint";
+  hint.textContent = "부담자 선택은 즉시 저장돼요. 전역 대상자와 같아지면 기본 정산으로 돌아가요.";
+  card.append(title, chips, hint);
   editor.appendChild(card);
 }
 
@@ -749,7 +748,9 @@ function renderResult(calculation) {
   if (!state.payments.length || errors.length > 0) {
     const message = errors.some((error) => error.code === "empty-default-participants")
       ? "기본 정산 대상자를 한 명 이상 포함해주세요."
-      : "결제 내역과 정산 대상자를 확인해주세요.";
+      : errors.some((error) => error.code === "empty-custom-participants")
+        ? "예외 결제의 부담자를 전역 정산 대상자 중에서 한 명 이상 선택해주세요."
+        : "결제 내역과 정산 대상자를 확인해주세요.";
     list.innerHTML = `<div class="notice">${message}</div>`;
     $("copyResultBtn").style.display = "none";
     $("createPngBtn").style.display = "none";
@@ -800,6 +801,19 @@ function saveAndRender() {
   normalizeState();
   saveState();
   render();
+}
+
+function commitState(nextState) {
+  const result = saveStateToStorage(localStorage, STORAGE_KEY, nextState);
+  if (!result.ok) {
+    showToast("저장하지 못했어요. 변경 전 상태를 유지합니다.");
+    render();
+    return false;
+  }
+  state = nextState;
+  invalidateShareImage();
+  render();
+  return true;
 }
 
 function addPayment() {
@@ -866,7 +880,6 @@ function clearPaymentsOnly() {
   showAllPayments = false;
   editingPaymentId = null;
   exceptionEditingPaymentId = null;
-  exceptionDraftParticipants = null;
   saveAndRender();
   closeStartOverDetails();
 }
@@ -879,7 +892,6 @@ function resetAll() {
   showAllPayments = false;
   editingPaymentId = null;
   exceptionEditingPaymentId = null;
-  exceptionDraftParticipants = null;
   saveAndRender();
   closeStartOverDetails();
 
@@ -995,11 +1007,7 @@ function bindEvents() {
     const targets = getTargets();
     const allSelected = state.names.length > 0 && targets.length === state.names.length;
 
-    state.names.forEach((name) => {
-      state.targets[name] = !allSelected;
-    });
-
-    saveAndRender();
+    applyGlobalTargets(allSelected ? [] : state.names.slice());
   });
 
   $("copyResultBtn").addEventListener("click", async () => {

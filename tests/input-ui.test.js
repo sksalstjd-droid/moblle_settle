@@ -57,3 +57,14 @@ test("빠른 입력은 금액·사용처·멤버 등록을 한 저장 경로로 
   assert.match(appSource, /\$\("payerButtons"\)[\s\S]*?\$\("amountInput"\)\.focus\(\)/);
   assert.match(appSource, /amountInput\.value = "";[\s\S]*?\$\("placeInput"\)\.value = "";[\s\S]*?amountInput\.focus/);
 });
+
+test("예외 부담자 선택은 즉시 저장하고 전역 제외자를 잠금 표시한다", () => {
+  assert.match(appSource, /function togglePaymentParticipant\([\s\S]*?setCustomParticipants\([\s\S]*?commitState\(result\.state\)/);
+  assert.match(appSource, /function commitState\(nextState\)[\s\S]*?saveStateToStorage\(localStorage, STORAGE_KEY, nextState\)[\s\S]*?if \(!result\.ok\)[\s\S]*?state = nextState/);
+  assert.match(appSource, /button\.disabled = locked/);
+  assert.match(appSource, /전체 정산 제외 🔒/);
+  const exceptionsSource = appSource.match(/function renderExceptions\([\s\S]*?\n}\n\nfunction renderResult/)?.[0] || "";
+  assert.doesNotMatch(exceptionsSource, /textContent = "적용"|textContent = "취소"|기본 정산으로 되돌리기/);
+  assert.match(appSource, /selected\.size === 0[\s\S]*?부담자는 한 명 이상 선택해야 해요/);
+  assert.match(css, /\.target-chip\.locked/);
+});

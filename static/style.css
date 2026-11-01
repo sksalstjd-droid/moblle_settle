@@ -751,6 +751,19 @@ button {
   content: "✕";
 }
 
+.target-chip.locked {
+  border-color: #d1d5db;
+  background: #e9ecef;
+  color: #707782;
+  cursor: not-allowed;
+}
+
+.target-chip.blocked,
+.exception-payment-btn.blocked {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px rgba(220, 70, 70, 0.18);
+}
+
 .payment-exceptions {
   margin-top: 14px;
   padding-top: 12px;
@@ -842,6 +855,13 @@ button {
 
 .exception-editor-card .target-chip-wrap {
   margin-bottom: 10px;
+}
+
+.exception-editor-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .transfer-row {
