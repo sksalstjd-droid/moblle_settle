@@ -50,23 +50,31 @@
       </section>
 
       <section id="quickInputCard" class="card">
-        <div class="section-title">
-          <h2>빠른 입력</h2>
+        <div id="quickEntryForm" class="quick-entry-form">
+          <div class="section-title">
+            <h2>빠른 입력</h2>
+          </div>
+
+          <div class="quick-input-fields">
+            <div class="quick-input-field quick-name-field">
+              <label class="field-label" for="payerInput">이름</label>
+              <input id="payerInput" class="name-input" name="settlement-member-query" type="text" placeholder="이름" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="quickInputFeedback" />
+            </div>
+            <div class="quick-input-row">
+              <div class="quick-input-field">
+                <label class="field-label" for="amountInput">금액</label>
+                <input id="amountInput" class="amount-input" name="settlement-amount" type="text" inputmode="numeric" pattern="[0-9,]*" placeholder="0" autocomplete="off" aria-describedby="quickInputFeedback" />
+              </div>
+              <div class="quick-input-field">
+                <label class="field-label" for="placeInput">사용처 (선택)</label>
+                <input id="placeInput" class="place-input" name="settlement-place" type="text" placeholder="예: 식당, 카페" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="quickInputFeedback" />
+              </div>
+            </div>
+          </div>
+
+          <button id="savePaymentBtn" class="primary-btn full" type="button">멤버 추가</button>
+          <p id="quickInputFeedback" class="quick-input-feedback" role="alert" aria-live="polite"></p>
         </div>
-
-        <label class="field-label" for="payerInput">이름</label>
-        <input id="payerInput" class="name-input" placeholder="결제자 이름" autocomplete="off" />
-
-        <label class="field-label" for="amountInput">금액</label>
-        <input id="amountInput" class="amount-input" inputmode="numeric" pattern="[0-9]*" placeholder="0" />
-
-        <details id="paymentOptions" class="payment-options">
-          <summary>사용처 추가 <span>선택</span></summary>
-          <label class="field-label" for="placeInput">사용처</label>
-          <input id="placeInput" class="place-input" placeholder="예: 식당, 카페" autocomplete="off" />
-        </details>
-
-        <button id="savePaymentBtn" class="primary-btn full">결제 저장</button>
 
         <div class="quick-name-area">
           <div class="section-title sub-title">
@@ -85,13 +93,6 @@
             멤버 관리
           </h2>
           <span id="memberCountBadge">0명</span>
-        </div>
-        <div class="member-add-area">
-          <label class="field-label" for="memberInput">결제 없이 참여한 사람 추가</label>
-          <div class="member-form">
-            <input id="memberInput" placeholder="이름 입력" autocomplete="off" />
-            <button id="addMemberBtn">추가</button>
-          </div>
         </div>
         <div id="memberList" class="list"></div>
       </section>
@@ -160,5 +161,8 @@
   <script src="{{ url_for('static', filename='settlement-core.js') }}"></script>
   <script src="{{ url_for('static', filename='share-report.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
+  {% if dev_live_reload_enabled %}
+  <script src="{{ url_for('static', filename='dev-live-reload.js') }}" data-server-id="{{ dev_server_id }}"></script>
+  {% endif %}
 </body>
 </html>

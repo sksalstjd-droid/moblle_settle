@@ -67,6 +67,52 @@
     }
   }
 
+  function classifyQuickEntry(values = {}) {
+    const payer = typeof values.payer === "string" ? values.payer.trim() : "";
+    const amountText = typeof values.amount === "string" ? values.amount.trim() : String(values.amount ?? "").trim();
+    const place = typeof values.place === "string" ? values.place.trim() : "";
+
+    if (!payer) return { ok: false, reason: "invalid-payer", field: "payer" };
+    if (!amountText) {
+      if (place) return { ok: false, reason: "missing-amount", field: "amount" };
+      return { ok: true, action: "add-member", payer };
+    }
+
+    if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(amountText)) {
+      return { ok: false, reason: "invalid-amount", field: "amount" };
+    }
+    const amount = Number(amountText.replace(/,/g, ""));
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      return { ok: false, reason: "invalid-amount", field: "amount" };
+    }
+    return { ok: true, action: "save-payment", payer, amount, place };
+  }
+
+  function addMemberToState(state, memberName) {
+    const name = typeof memberName === "string" ? memberName.trim() : "";
+    if (!name) return { ok: false, reason: "invalid-member" };
+    if (state.names.includes(name)) return { ok: false, reason: "duplicate-member" };
+
+    const candidate = {
+      ...state,
+      names: [...state.names, name],
+      targets: { ...state.targets, [name]: true },
+    };
+    const normalized = normalizeStateData(candidate);
+    if (normalized.fatal || normalized.issues.length > 0) {
+      return { ok: false, reason: "invalid-created-state", issues: normalized.issues };
+    }
+    return { ok: true, state: normalized.state, member: name };
+  }
+
+  function storeMemberAddition(storage, key, state, memberName) {
+    const added = addMemberToState(state, memberName);
+    if (!added.ok) return { ...added, state };
+    const saved = saveStateToStorage(storage, key, added.state);
+    if (!saved.ok) return { ok: false, reason: "storage-write-failed", error: saved.error, state };
+    return added;
+  }
+
   function addDefaultPayment(state, values, options = {}) {
     const payer = typeof values.payer === "string" ? values.payer.trim() : "";
     const amount = Number(values.amount);
@@ -321,7 +367,9 @@
 
     const lastPayer = typeof input.lastPayer === "string" && seenNames.has(input.lastPayer.trim())
       ? input.lastPayer.trim()
-      : names[0] || null;
+      : input.lastPayer === null && Object.prototype.hasOwnProperty.call(input, "lastPayer")
+        ? null
+        : names[0] || null;
 
     return {
       state: { schemaVersion: SCHEMA_VERSION, names, payments, targets, lastPayer },
@@ -461,6 +509,9 @@
     createPaymentId,
     loadStateFromStorage,
     saveStateToStorage,
+    classifyQuickEntry,
+    addMemberToState,
+    storeMemberAddition,
     addDefaultPayment,
     storeDefaultPayment,
     updatePayment,

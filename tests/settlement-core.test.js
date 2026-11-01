@@ -4,6 +4,9 @@ const assert = require("node:assert/strict");
 const {
   SCHEMA_VERSION,
   createInitialState,
+  classifyQuickEntry,
+  addMemberToState,
+  storeMemberAddition,
   loadStateFromStorage,
   saveStateToStorage,
   addDefaultPayment,
@@ -108,6 +111,77 @@ test("새 멤버를 추가한 v2 상태를 정상적으로 유지한다", () => 
   assert.deepEqual(normalized.state.names, ["A"]);
   assert.equal(normalized.state.targets.A, true);
   assert.equal(normalized.state.lastPayer, "A");
+});
+
+test("빠른 입력은 이름만 있으면 멤버 추가로 분류한다", () => {
+  assert.deepEqual(classifyQuickEntry({ payer: " 새 멤버 ", amount: "", place: "" }), {
+    ok: true,
+    action: "add-member",
+    payer: "새 멤버",
+  });
+});
+
+test("빠른 입력은 이름 누락과 사용처만 있는 입력을 구분해 차단한다", () => {
+  assert.equal(classifyQuickEntry({ amount: "1000" }).reason, "invalid-payer");
+  assert.deepEqual(classifyQuickEntry({ payer: "A", amount: "", place: "식당" }), {
+    ok: false,
+    reason: "missing-amount",
+    field: "amount",
+  });
+});
+
+test("빠른 입력은 빈 금액, 0원, 음수, 비정상 금액을 구분한다", () => {
+  assert.equal(classifyQuickEntry({ payer: "A", amount: "" }).action, "add-member");
+  for (const amount of ["0", "-100", "12,34", "abc", "9007199254740992"]) {
+    assert.equal(classifyQuickEntry({ payer: "A", amount }).reason, "invalid-amount");
+  }
+});
+
+test("빠른 입력은 쉼표 금액과 선택 사용처를 결제로 분류한다", () => {
+  assert.deepEqual(classifyQuickEntry({ payer: "A", amount: "12,345", place: " 카페 " }), {
+    ok: true,
+    action: "save-payment",
+    payer: "A",
+    amount: 12345,
+    place: "카페",
+  });
+});
+
+test("이름만 저장하면 결제 없이 멤버와 기본 대상자만 추가하고 결제자를 유지한다", () => {
+  const state = makeState(["A"], [{ id: "custom-1", payer: "A", amount: 1000, participantMode: "custom", participants: ["A"] }]);
+  state.lastPayer = "A";
+  const result = addMemberToState(state, " B ");
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.state.names, ["A", "B"]);
+  assert.equal(result.state.targets.B, true);
+  assert.equal(result.state.lastPayer, "A");
+  assert.equal(result.state.payments.length, 1);
+  assert.deepEqual(result.state.payments[0].participants, ["A"]);
+  assert.equal(result.state.payments[0].id, "custom-1");
+});
+
+test("이름만 저장할 때 중복을 차단하고 localStorage 실패 시 원본 상태를 유지한다", () => {
+  const state = makeState(["A"], []);
+  assert.equal(addMemberToState(state, "A").reason, "duplicate-member");
+  const result = storeMemberAddition({ setItem() { throw new Error("quota"); } }, "v2", state, "B");
+  assert.equal(result.reason, "storage-write-failed");
+  assert.deepEqual(result.state, state);
+  assert.deepEqual(state.names, ["A"]);
+});
+
+test("멤버만 저장한 뒤 재로드해도 결제 없이 새 기본 대상자로 유지된다", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, value),
+  };
+  const result = storeMemberAddition(storage, "v2", createInitialState(), "참여자");
+  assert.equal(result.ok, true);
+  const reloaded = loadStateFromStorage(storage, "v2");
+  assert.deepEqual(reloaded.state.names, ["참여자"]);
+  assert.equal(reloaded.state.targets["참여자"], true);
+  assert.deepEqual(reloaded.state.payments, []);
+  assert.equal(reloaded.state.lastPayer, null);
 });
 
 test("사용처 없이 기본 결제를 저장한다", () => {

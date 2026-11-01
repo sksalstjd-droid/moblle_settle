@@ -195,6 +195,10 @@ button {
   margin-bottom: 10px;
 }
 
+.quick-entry-form .section-title {
+  margin-bottom: 3px;
+}
+
 .section-title h2 {
   display: flex;
   align-items: center;
@@ -218,6 +222,26 @@ button {
   margin: 10px 0 5px;
 }
 
+.quick-input-fields {
+  display: grid;
+  gap: 4px;
+}
+
+.quick-input-field {
+  min-width: 0;
+}
+
+.quick-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px;
+}
+
+.quick-input-fields .field-label {
+  margin: 3px 0;
+  font-size: 11px;
+}
+
 .name-input,
 .amount-input {
   width: 100%;
@@ -228,6 +252,21 @@ button {
   font-weight: 600;
   outline: none;
   background: #fbfcfe;
+}
+
+.quick-input-fields .name-input,
+.quick-input-fields .amount-input,
+.quick-input-fields .place-input {
+  height: 46px;
+  min-height: 46px;
+  border-radius: 12px;
+  padding: 0 11px;
+  font-size: 17px;
+}
+
+.quick-input-fields .amount-input {
+  text-align: right;
+  font-size: 20px;
 }
 
 .name-input {
@@ -255,31 +294,53 @@ button {
   box-shadow: 0 0 0 3px rgba(59, 142, 208, 0.12);
 }
 
-.payment-options {
+.amount-input:focus,
+.name-input:focus,
+.quick-input-fields .place-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(59, 142, 208, 0.12);
+}
+
+.quick-input-fields .input-error,
+.quick-input-fields .input-error:focus {
+  border-color: var(--danger);
+  background: #fff5f5;
+  box-shadow: 0 0 0 3px rgba(211, 91, 91, 0.13);
+  animation: quick-input-shake 0.24s ease;
+}
+
+@keyframes quick-input-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-input-fields .input-error,
+  .quick-input-fields .input-error:focus {
+    animation: none;
+  }
+}
+
+.quick-entry-form .primary-btn.full {
+  min-height: 44px;
   margin-top: 8px;
 }
 
-.payment-options summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--blue);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
+.quick-entry-form .primary-btn:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
 }
 
-.payment-options summary span {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
+.quick-input-feedback {
+  margin: 5px 1px 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
-.amount-input:focus,
-.name-input:focus,
-.member-form input:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(59, 142, 208, 0.12);
+.quick-input-feedback:empty {
+  display: none;
 }
 
 .chip-wrap {
@@ -464,30 +525,6 @@ button {
   font-size: 13px;
   font-weight: 600;
   border-radius: 999px;
-}
-
-.member-add-area {
-  margin-bottom: 10px;
-}
-
-.member-add-area .field-label {
-  margin-top: 0;
-}
-
-.member-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px;
-  gap: 8px;
-}
-
-.member-form input {
-  min-width: 0;
-  min-height: 42px;
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  padding: 0 12px;
-  outline: none;
-  background: #fbfcfe;
 }
 
 .list {

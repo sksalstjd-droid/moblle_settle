@@ -8,9 +8,11 @@ const RECOVERY_KEY_PREFIX = `${STORAGE_KEY}_recovery_`;
 const {
   createInitialState,
   createPaymentId,
+  classifyQuickEntry,
   loadStateFromStorage,
   saveStateToStorage,
   storeDefaultPayment,
+  storeMemberAddition,
   updatePayment,
   setCustomParticipants,
   resetPaymentParticipants,
@@ -36,6 +38,9 @@ let editingPaymentId = null;
 let exceptionEditingPaymentId = null;
 let exceptionDraftParticipants = null;
 let preparedShare = null;
+let quickInputFocused = false;
+let quickVisibilityFrame = null;
+let quickSavedPayer = null;
 
 function saveState() {
   const result = saveStateToStorage(localStorage, STORAGE_KEY, state);
@@ -90,8 +95,14 @@ function parseAmount(value) {
 
 function formatAmountInput() {
   const input = $("amountInput");
-  const amount = parseAmount(input.value);
-  input.value = amount ? amount.toLocaleString("ko-KR") : "";
+  const raw = input.value.trim();
+  if (!raw) {
+    input.value = "";
+  } else if (/^[\d,]+$/.test(raw)) {
+    const digits = raw.replace(/\D/g, "");
+    input.value = digits ? Number(digits).toLocaleString("ko-KR") : "";
+  }
+  clearQuickInputError(input);
   updateSaveButtonText();
 }
 
@@ -100,9 +111,82 @@ function getPayerInputName() {
 }
 
 function keepQuickInputVisible() {
-  window.setTimeout(() => {
-    $("quickInputCard").scrollIntoView({ behavior: "smooth", block: "start" });
-  }, 120);
+  quickInputFocused = true;
+  scheduleQuickInputVisibility();
+  window.setTimeout(scheduleQuickInputVisibility, 240);
+}
+
+function scheduleQuickInputVisibility() {
+  if (!quickInputFocused || quickVisibilityFrame !== null) return;
+  quickVisibilityFrame = window.requestAnimationFrame(() => {
+    quickVisibilityFrame = null;
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const layoutHeight = Math.max(window.innerHeight, document.documentElement.clientHeight);
+    const screenHeight = window.screen ? window.screen.availHeight : 0;
+    const keyboardOpen = layoutHeight - viewport.height > 80
+      || (screenHeight - viewport.height > 180 && quickInputFocused);
+    if (!keyboardOpen) return;
+
+    const group = $("quickEntryForm");
+    const rect = group.getBoundingClientRect();
+    const visibleTop = viewport.offsetTop + 8;
+    const visibleBottom = viewport.offsetTop + viewport.height - 8;
+    if (rect.top >= visibleTop && rect.bottom <= visibleBottom) return;
+
+    const pageTop = window.scrollY + rect.top - visibleTop;
+    window.scrollTo({ top: Math.max(0, pageTop), behavior: "auto" });
+  });
+}
+
+function clearQuickInputError(input) {
+  if (!input) return;
+  input.classList.remove("input-error");
+  input.removeAttribute("aria-invalid");
+  $("quickInputFeedback").textContent = "";
+}
+
+function showQuickInputError(input, message) {
+  document.querySelectorAll(".quick-input-fields input.input-error").forEach((field) => {
+    field.classList.remove("input-error");
+    field.removeAttribute("aria-invalid");
+  });
+  const feedback = $("quickInputFeedback");
+  feedback.textContent = message;
+  input.classList.remove("input-error");
+  void input.offsetWidth;
+  input.classList.add("input-error");
+  input.setAttribute("aria-invalid", "true");
+  input.focus({ preventScroll: true });
+  scheduleQuickInputVisibility();
+}
+
+function showQuickInputNotice(message) {
+  $("quickInputFeedback").textContent = message;
+}
+
+function addQuickMember(name) {
+  const result = storeMemberAddition(localStorage, STORAGE_KEY, state, name);
+  if (!result.ok) {
+    if (result.reason === "duplicate-member") {
+      showQuickInputNotice("이미 등록된 멤버예요. 결제를 추가하려면 금액을 입력하세요.");
+    } else if (result.reason === "storage-write-failed") {
+      showQuickInputNotice("멤버를 저장하지 못했어요. 입력 내용을 그대로 두었습니다.");
+    } else {
+      showQuickInputNotice("이름을 확인해주세요.");
+    }
+    return false;
+  }
+
+  state = result.state;
+  render();
+  $("payerInput").value = "";
+  $("amountInput").value = "";
+  $("placeInput").value = "";
+  updateSaveButtonText();
+  showToast(`${name} 멤버 추가됨`);
+  $("payerInput").focus({ preventScroll: true });
+  return true;
 }
 
 function getTargets() {
@@ -284,6 +368,7 @@ function renderPayerButtons() {
     button.textContent = name;
     button.style.borderColor = colorOf(name);
     button.addEventListener("click", () => {
+      quickSavedPayer = null;
       $("payerInput").value = name;
       $("amountInput").focus();
       updateSaveButtonText();
@@ -717,72 +802,61 @@ function saveAndRender() {
   render();
 }
 
-function addMember() {
-  const input = $("memberInput");
-  const name = input.value.trim();
-
-  if (!name) {
-    showToast("이름을 입력해주세요.");
-    return;
-  }
-
-  if (state.names.includes(name)) {
-    showToast("이미 있는 이름이에요.");
-    return;
-  }
-
-  state.names.push(name);
-  state.targets[name] = true;
-
-  if (!state.lastPayer) {
-    state.lastPayer = name;
-  }
-
-  input.value = "";
-  saveAndRender();
-}
-
 function addPayment() {
   const name = getPayerInputName();
-  const amount = parseAmount($("amountInput").value);
+  const amountInput = $("amountInput");
   const place = $("placeInput").value.trim();
+  const entry = classifyQuickEntry({ payer: name, amount: amountInput.value, place });
 
-  if (!name) {
-    showToast("이름을 입력해주세요.");
+  if (!entry.ok) {
+    if (entry.reason === "invalid-payer") {
+      showQuickInputError($("payerInput"), "이름을 입력해주세요.");
+    } else if (entry.reason === "missing-amount") {
+      showQuickInputError(amountInput, "사용처만 입력했어요. 금액을 입력해주세요.");
+    } else {
+      showQuickInputError(amountInput, "금액은 1원 이상의 숫자로 입력해주세요.");
+    }
     return;
   }
 
-  if (amount <= 0) {
-    showToast("금액을 입력해주세요.");
+  if (entry.action === "add-member") {
+    if (state.names.includes(entry.payer)) {
+      showQuickInputNotice("이미 등록된 멤버예요. 결제를 추가하려면 금액을 입력하세요.");
+      return;
+    }
+    addQuickMember(entry.payer);
     return;
   }
 
+  const { payer, amount } = entry;
   const result = storeDefaultPayment(
     localStorage,
     STORAGE_KEY,
     state,
-    { payer: name, amount, place },
+    { payer, amount, place: entry.place },
     { idFactory: createPaymentId },
   );
   if (!result.ok) {
     if (result.reason === "empty-default-participants") {
-      showToast("기본 정산 대상자가 모두 제외되어 있어요. 결과 탭에서 한 명 이상 포함해주세요.");
+      showQuickInputNotice("기본 정산 대상자가 모두 제외되어 있어요. 결과 탭에서 한 명 이상 포함해주세요.");
     } else if (result.reason === "storage-write-failed") {
-      showToast("결제를 저장하지 못했어요. 입력 내용은 그대로 유지됩니다.");
+      showQuickInputNotice("결제를 저장하지 못했어요. 입력 내용은 그대로 유지됩니다.");
     } else {
-      showToast("결제 정보를 확인해주세요.");
+      showQuickInputNotice("결제 정보를 확인해주세요.");
     }
     return;
   }
 
   state = result.state;
   invalidateShareImage();
-  $("amountInput").value = "";
+  quickSavedPayer = payer;
+  amountInput.value = "";
   $("placeInput").value = "";
-  $("paymentOptions").open = false;
+  clearQuickInputError(amountInput);
   render();
-  $("amountInput").focus({ preventScroll: true });
-  showSaveSuccess(`${name} · ${won(amount)} 저장됨`);
+  amountInput.focus({ preventScroll: true });
+  keepQuickInputVisible();
+  showSaveSuccess(`${payer} · ${won(amount)} 저장됨`);
 }
 
 function clearPaymentsOnly() {
@@ -837,12 +911,29 @@ function updateSaveButtonText() {
   if (!button) return;
 
   const name = getPayerInputName();
-  const amount = parseAmount($("amountInput").value);
+  const amountRaw = $("amountInput").value.trim();
+  const place = $("placeInput").value.trim();
+  button.disabled = false;
+  const feedback = $("quickInputFeedback");
 
-  if (name && amount > 0) {
-    button.textContent = `➕ ${name} · ${won(amount)} 저장`;
-  } else {
+  if (!amountRaw && !place && name && state.names.includes(name) && name !== quickSavedPayer) {
+    button.textContent = "이미 등록됨";
+    button.disabled = true;
+    showQuickInputNotice("이미 등록된 멤버예요. 결제를 추가하려면 금액을 입력하세요.");
+    return;
+  }
+
+  if (feedback.textContent.startsWith("이미 등록된 멤버")) feedback.textContent = "";
+  if (amountRaw) {
     button.textContent = "결제 저장";
+  } else if (name && name === quickSavedPayer) {
+    button.textContent = "금액 입력";
+  } else if (!name && place) {
+    button.textContent = "이름 입력";
+  } else if (place) {
+    button.textContent = "금액 입력";
+  } else {
+    button.textContent = "멤버 추가";
   }
 }
 
@@ -861,13 +952,25 @@ function bindEvents() {
     btn.addEventListener("click", () => setTab(btn.dataset.tab));
   });
 
-  $("addMemberBtn").addEventListener("click", addMember);
-  $("memberInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") addMember();
+  const quickInputs = [$("payerInput"), $("amountInput"), $("placeInput")];
+  quickInputs.forEach((input) => {
+    input.addEventListener("focus", keepQuickInputVisible);
+    input.addEventListener("blur", () => {
+      quickInputFocused = false;
+    });
+    input.addEventListener("input", () => {
+      quickSavedPayer = null;
+      clearQuickInputError(input);
+    });
   });
 
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", scheduleQuickInputVisibility);
+    window.visualViewport.addEventListener("scroll", scheduleQuickInputVisibility);
+  }
+
   $("payerInput").addEventListener("focus", () => {
-    keepQuickInputVisible();
+    quickSavedPayer = null;
     $("payerInput").value = "";
     updateSaveButtonText();
   });
@@ -883,6 +986,7 @@ function bindEvents() {
   $("placeInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") addPayment();
   });
+  $("placeInput").addEventListener("input", updateSaveButtonText);
 
   $("savePaymentBtn").addEventListener("click", addPayment);
   $("clearPaymentsBtn").addEventListener("click", clearPaymentsOnly);

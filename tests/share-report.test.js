@@ -46,6 +46,177 @@ test("Flask가 반환하는 실제 HTML에 세 스크립트가 올바른 순서�
   assert.ok(coreIndex >= 0 && shareIndex > coreIndex && appIndex > shareIndex);
 });
 
+test("개발 모드에서만 모바일 Live Reload 스크립트와 변경 지문을 제공한다", () => {
+  const result = spawnSync("python", ["-B", "-c", [
+    "import json",
+    "from app import app",
+    "client = app.test_client()",
+    "page = client.get('/')",
+    "revision = client.get('/__dev/revision')",
+    "static = client.get('/static/app.js')",
+    "print(json.dumps({'enabled': app.config['DEV_LIVE_RELOAD'], 'html': page.get_data(as_text=True), 'revision_status': revision.status_code, 'revision': revision.get_json(silent=True), 'cache_control': revision.headers.get('Cache-Control', ''), 'static_cache_control': static.headers.get('Cache-Control', '')}))",
+  ].join("; ")], {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: { ...process.env, SETTLE_DEV: "1", RENDER: "" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.enabled, true);
+  assert.match(payload.html, /static\/dev-live-reload\.js/);
+  assert.match(payload.html, /data-server-id="\d+"/);
+  assert.equal(payload.revision_status, 200);
+  assert.match(payload.revision.revision, /^[a-f0-9]{64}$/);
+  assert.match(payload.revision.server_id, /^\d+$/);
+  assert.match(payload.cache_control, /no-store/);
+  assert.match(payload.static_cache_control, /no-store/);
+});
+
+test("Render 환경에서는 개발 Live Reload 경로를 비활성화한다", () => {
+  const result = spawnSync("python", ["-B", "-c", [
+    "import json",
+    "from app import app",
+    "client = app.test_client()",
+    "page = client.get('/')",
+    "revision = client.get('/__dev/revision')",
+    "print(json.dumps({'enabled': app.config['DEV_LIVE_RELOAD'], 'html': page.get_data(as_text=True), 'revision_status': revision.status_code}))",
+  ].join("; ")], {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: { ...process.env, SETTLE_DEV: "1", RENDER: "true" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.enabled, false);
+  assert.doesNotMatch(payload.html, /static\/dev-live-reload\.js/);
+  assert.equal(payload.revision_status, 404);
+});
+
+test("개발 서버는 Python 자동 재시작만 켜고 대화형 디버거를 끈다", () => {
+  const result = spawnSync("python", ["-B", "-c", [
+    "import json, os, runpy",
+    "from unittest.mock import patch",
+    "with patch('flask.Flask.run') as run:",
+    " runpy.run_path('app.py', run_name='__main__')",
+    " print(json.dumps(run.call_args.kwargs))",
+  ].join("\n")], {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: { ...process.env, SETTLE_DEV: "1", RENDER: "" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const options = JSON.parse(result.stdout);
+  assert.equal(options.host, "0.0.0.0");
+  assert.equal(options.debug, false);
+  assert.equal(options.use_debugger, false);
+  assert.equal(options.use_reloader, true);
+});
+
+test("Windows 자동 시작용 포트 검사는 Windows PowerShell에서 지원되는 방식으로 소켓을 닫는다", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../run-local.ps1"), "utf8");
+  assert.match(source, /TcpListener\]::new/);
+  assert.match(source, /\$probe\.Stop\(\)/);
+  assert.doesNotMatch(source, /\$probe\.Dispose\(\)/);
+  assert.match(source, /\$env:SETTLE_DEV = "1"/);
+  assert.match(source, /\$env:FLASK_DEBUG = "0"/);
+});
+
+test("Live Reload는 안정된 파일·서버 변경을 감지하고 백그라운드 복귀 즉시 다시 확인한다", async () => {
+  const source = fs.readFileSync(path.join(__dirname, "../static/dev-live-reload.js"), "utf8");
+  function createHarness(pageServerId, initialPayload) {
+    let current = { ...initialPayload };
+    let failRequests = false;
+    let reloadCount = 0;
+    let timerId = 0;
+    const timers = new Map();
+    const documentListeners = {};
+    const document = {
+      hidden: false,
+      currentScript: { dataset: { serverId: pageServerId } },
+      addEventListener: (name, callback) => { documentListeners[name] = callback; },
+    };
+    const window = {
+      location: { reload: () => { reloadCount += 1; } },
+      addEventListener() {},
+      setTimeout: (callback, delay) => {
+        const id = ++timerId;
+        timers.set(id, { callback, delay });
+        return id;
+      },
+      clearTimeout: (id) => timers.delete(id),
+    };
+    vm.runInNewContext(source, {
+      document,
+      window,
+      fetch: async () => {
+        if (failRequests) throw new Error("connection temporarily unavailable");
+        return { ok: true, json: async () => ({ ...current }) };
+      },
+    });
+    return {
+      document,
+      documentListeners,
+      timers,
+      setCurrent: (payload) => { current = { ...payload }; },
+      setRequestFailure: (value) => { failRequests = value; },
+      reloads: () => reloadCount,
+      async runNextTimer() {
+        const next = [...timers.entries()].sort((a, b) => a[1].delay - b[1].delay)[0];
+        assert.ok(next, "expected a scheduled check");
+        timers.delete(next[0]);
+        next[1].callback();
+        await new Promise((resolve) => setImmediate(resolve));
+      },
+      async resume() {
+        document.hidden = false;
+        documentListeners.visibilitychange();
+        await new Promise((resolve) => setImmediate(resolve));
+      },
+      hide() {
+        document.hidden = true;
+        documentListeners.visibilitychange();
+      },
+    };
+  }
+
+  // Unchanged content stays put; a real content change needs two matching polls.
+  const files = createHarness("10", { revision: "first", server_id: "10" });
+  await files.runNextTimer();
+  assert.equal(files.reloads(), 0);
+  files.setCurrent({ revision: "second", server_id: "10" });
+  await files.runNextTimer();
+  assert.equal(files.reloads(), 0);
+  await files.runNextTimer();
+  assert.equal(files.reloads(), 1);
+
+  // A Python reloader restart changes the server id even if asset hashes match.
+  const restarted = createHarness("10", { revision: "same", server_id: "11" });
+  await restarted.runNextTimer();
+  await restarted.runNextTimer();
+  assert.equal(restarted.reloads(), 1);
+
+  // A page returning from the background polls immediately and then confirms.
+  const resumed = createHarness("20", { revision: "one", server_id: "20" });
+  await resumed.runNextTimer();
+  resumed.hide();
+  resumed.setCurrent({ revision: "two", server_id: "20" });
+  await resumed.resume();
+  assert.equal(resumed.reloads(), 0);
+  await resumed.runNextTimer();
+  assert.equal(resumed.reloads(), 1);
+
+  // Temporary server unavailability is retried and the restarted process is noticed.
+  const reconnect = createHarness("30", { revision: "same", server_id: "30" });
+  await reconnect.runNextTimer();
+  reconnect.setRequestFailure(true);
+  await reconnect.runNextTimer();
+  reconnect.setRequestFailure(false);
+  reconnect.setCurrent({ revision: "same", server_id: "31" });
+  await reconnect.runNextTimer();
+  await reconnect.runNextTimer();
+  assert.equal(reconnect.reloads(), 1);
+});
+
 function stateOf(names, payments, targets = {}) {
   return {
     schemaVersion: 2,

@@ -5,6 +5,8 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = $PSScriptRoot
 $env:HOST = "0.0.0.0"
+$env:SETTLE_DEV = "1"
+$env:FLASK_DEBUG = "0"
 
 if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot "app.py"))) {
     throw "app.py를 찾을 수 없습니다: $ProjectRoot"
@@ -20,7 +22,6 @@ catch [System.Net.Sockets.SocketException] {
 }
 finally {
     $probe.Stop()
-    $probe.Dispose()
 }
 
 if (-not $portAvailable) {
@@ -48,5 +49,4 @@ if (-not $portAvailable) {
 
 Set-Location -LiteralPath $ProjectRoot
 $env:PORT = [string]$Port
-$env:FLASK_DEBUG = "0"
 python -B app.py
