@@ -3,57 +3,75 @@ const PALETTE = [
   "#BE7D95", "#C97861", "#79BF91", "#B8A340", "#7D9FC2",
 ];
 
-const STORAGE_KEY = "mobile_settle_flask_state_v1";
+const STORAGE_KEY = "mobile_settle_flask_state_v2";
+const RECOVERY_KEY_PREFIX = `${STORAGE_KEY}_recovery_`;
+const {
+  createInitialState,
+  createPaymentId,
+  loadStateFromStorage,
+  saveStateToStorage,
+  storeDefaultPayment,
+  updatePayment,
+  setCustomParticipants,
+  resetPaymentParticipants,
+  normalizeStateData,
+  calculateSettlement,
+  removeMember,
+} = SettlementCore;
+const {
+  buildShareModel,
+  buildCopyText: buildReportCopyText,
+  createPngReport,
+  shareFile,
+  requestDownload,
+} = ShareReport;
 
-let state = {
-  names: [],
-  payments: [], // { payer, amount }
-  targets: {},
-  lastPayer: null,
-};
+let state = createInitialState();
 
 const $ = (id) => document.getElementById(id);
 let saveButtonTimer = null;
 let showAllPayments = false;
+let startupStorageMessage = "";
+let editingPaymentId = null;
+let exceptionEditingPaymentId = null;
+let exceptionDraftParticipants = null;
+let preparedShare = null;
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const result = saveStateToStorage(localStorage, STORAGE_KEY, state);
+  if (!result.ok) {
+    showToast("저장하지 못했어요. 브라우저 저장 공간을 확인해주세요.");
+    return false;
+  }
+  return true;
+}
+
+function preserveInvalidStorage(raw) {
+  try {
+    localStorage.setItem(`${RECOVERY_KEY_PREFIX}${Date.now()}`, raw);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    state.names = Array.isArray(parsed.names) ? parsed.names : [];
-    state.payments = Array.isArray(parsed.payments) ? parsed.payments : [];
-    state.targets = parsed.targets && typeof parsed.targets === "object" ? parsed.targets : {};
-    state.lastPayer = parsed.lastPayer || null;
-  } catch {
-    state = { names: [], payments: [], targets: {}, lastPayer: null };
+  const loaded = loadStateFromStorage(localStorage, STORAGE_KEY);
+  state = loaded.state;
+  if (!loaded.fatal && loaded.issues.length === 0) return;
+
+  if (loaded.raw !== null) {
+    const preserved = preserveInvalidStorage(loaded.raw);
+    startupStorageMessage = preserved
+      ? `저장 데이터 오류 ${loaded.issues.length}건을 복구하고 원본을 보관했어요.`
+      : `저장 데이터 오류 ${loaded.issues.length}건을 복구했지만 원본을 보관하지 못했어요.`;
+  } else {
+    startupStorageMessage = "브라우저 저장소를 읽지 못해 임시 상태로 시작했어요.";
   }
 }
 
 function normalizeState() {
-  state.names.forEach((name) => {
-    if (typeof state.targets[name] !== "boolean") {
-      state.targets[name] = true;
-    }
-  });
-
-  Object.keys(state.targets).forEach((name) => {
-    if (!state.names.includes(name)) {
-      delete state.targets[name];
-    }
-  });
-
-  state.payments = state.payments.filter((p) => state.names.includes(p.payer));
-
-  if (state.names.length === 0) {
-    state.lastPayer = null;
-  } else if (!state.names.includes(state.lastPayer)) {
-    state.lastPayer = state.names[0];
-  }
+  state = normalizeStateData(state).state;
 }
 
 function colorOf(name) {
@@ -100,106 +118,109 @@ function getPaidSums() {
 }
 
 function calcResult() {
-  const targets = getTargets();
-
-  if (targets.length === 0 || state.payments.length === 0) {
-    return { total: 0, perHead: 0, transfers: [] };
-  }
-
-  const total = state.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const perHead = Math.floor(total / targets.length);
-  const remainder = total % targets.length;
-
-  const paid = Object.fromEntries(state.names.map((name) => [name, 0]));
-  const owed = Object.fromEntries(state.names.map((name) => [name, 0]));
-
-  state.payments.forEach((p) => {
-    if (p.payer in paid) paid[p.payer] += Number(p.amount || 0);
-  });
-
-  // 원 단위 나머지는 정산 대상자 표시 순서대로 앞에서부터 1원씩 배분한다.
-  targets.forEach((name, index) => {
-    owed[name] += perHead + (index < remainder ? 1 : 0);
-  });
-
-  const senders = [];
-  const receivers = [];
-
-  state.names.forEach((name) => {
-    const balance = owed[name] - paid[name];
-    if (balance > 0) senders.push([name, balance]);
-    if (balance < 0) receivers.push([name, -balance]);
-  });
-
-  const transfers = [];
-  let i = 0;
-  let j = 0;
-
-  while (i < senders.length && j < receivers.length) {
-    const amount = Math.min(senders[i][1], receivers[j][1]);
-    if (amount > 0) transfers.push([senders[i][0], receivers[j][0], amount]);
-
-    senders[i][1] -= amount;
-    receivers[j][1] -= amount;
-
-    if (senders[i][1] === 0) i += 1;
-    if (receivers[j][1] === 0) j += 1;
-  }
-
-  return { total, perHead, transfers };
+  return calculateSettlement(state);
 }
 
 function buildCopyText() {
-  const { total, perHead, transfers } = calcResult();
-  const targets = getTargets();
-  const excludedNames = state.names.filter((name) => state.targets[name] === false);
+  return buildReportCopyText(state, calcResult());
+}
 
-  const lines = [
-    "🧾 정산 결과",
-    "",
-    `총액: ${won(total)}`,
-    `1인당: ${won(perHead)} (${targets.length}명 기준)`,
-  ];
+function shareFingerprint() {
+  return JSON.stringify({ names: state.names, payments: state.payments, targets: state.targets });
+}
 
-  if (excludedNames.length > 0) {
-    lines.push(`정산 제외: ${excludedNames.join(", ")}`);
+function invalidateShareImage() {
+  if (preparedShare?.url) URL.revokeObjectURL(preparedShare.url);
+  preparedShare = null;
+  const panel = $("sharePanel");
+  if (panel) panel.hidden = true;
+  const preview = $("sharePreview");
+  if (preview) preview.removeAttribute("src");
+}
+
+function shareFileName() {
+  const date = new Date();
+  const stamp = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((value) => String(value).padStart(2, "0"))
+    .join("");
+  return `settlement-${stamp}.png`;
+}
+
+async function prepareShareImage() {
+  const calculation = calcResult();
+  const model = buildShareModel(state, calculation);
+  if (!model.ok || !state.payments.length) {
+    showToast("정산 오류를 해결한 뒤 이미지를 만들어주세요.");
+    return;
   }
 
-  if (transfers.length) {
-    const grouped = [];
-    const groupMap = new Map();
+  const button = $("createPngBtn");
+  button.disabled = true;
+  button.textContent = "PNG 만드는 중…";
+  $("sharePanel").hidden = false;
+  $("shareStatus").textContent = "공유 이미지를 만들고 있어요.";
 
-    transfers.forEach(([sender, receiver, amount]) => {
-      if (!groupMap.has(sender)) {
-        const group = { sender, total: 0, items: [] };
-        groupMap.set(sender, group);
-        grouped.push(group);
-      }
+  try {
+    if (document.fonts?.ready) await document.fonts.ready;
+    const report = await createPngReport(model);
+    invalidateShareImage();
+    const fileName = shareFileName();
+    const file = new File([report.blob], fileName, { type: "image/png" });
+    const url = URL.createObjectURL(report.blob);
+    preparedShare = { ...report, file, fileName, url, fingerprint: shareFingerprint() };
+    $("sharePreview").src = url;
+    $("sharePanel").hidden = false;
 
-      const group = groupMap.get(sender);
-      group.total += amount;
-      group.items.push({ receiver, amount });
-    });
+    let canShareFile = false;
+    try {
+      canShareFile = typeof navigator.canShare === "function"
+        && typeof navigator.share === "function"
+        && navigator.canShare({ files: [file] });
+    } catch {
+      canShareFile = false;
+    }
+    $("sharePngBtn").hidden = !canShareFile;
+    $("shareStatus").textContent = canShareFile
+      ? "이미지가 준비됐어요. 공유하거나 PNG로 저장할 수 있어요."
+      : "이 브라우저는 파일 공유를 지원하지 않아 PNG 저장을 제공합니다.";
+  } catch (error) {
+    invalidateShareImage();
+    $("sharePanel").hidden = false;
+    $("shareStatus").textContent = "PNG 생성에 실패했어요. 다시 시도해주세요.";
+    showToast("PNG 생성에 실패했어요.");
+  } finally {
+    button.disabled = false;
+    button.textContent = "PNG 공유 이미지 만들기";
+  }
+}
 
-    lines.push("", "[보낼 돈]");
+function hasFreshShareImage() {
+  if (preparedShare && preparedShare.fingerprint === shareFingerprint()) return true;
+  invalidateShareImage();
+  showToast("정산 내용이 바뀌었어요. PNG를 다시 만들어주세요.");
+  return false;
+}
 
-    grouped.forEach((group) => {
-      if (group.items.length === 1) {
-        const { receiver, amount } = group.items[0];
-        lines.push("", `[${group.sender}] → ${receiver} ${won(amount)}`);
-        return;
-      }
-
-      lines.push("", `[${group.sender}] 총 ${won(group.total)}`);
-      group.items.forEach(({ receiver, amount }) => {
-        lines.push(`→ ${receiver} ${won(amount)}`);
-      });
-    });
+async function sharePreparedImage() {
+  if (!hasFreshShareImage()) return;
+  const result = await shareFile(navigator, preparedShare.file);
+  if (result.status === "shared") {
+    showToast("공유 메뉴로 이미지를 전달했어요.");
+  } else if (result.status === "canceled") {
+    showToast("공유를 취소했어요.");
+  } else if (result.status === "unsupported") {
+    showToast("파일 공유를 지원하지 않아 PNG 저장을 이용해주세요.");
   } else {
-    lines.push("", "정산할 내역 없음");
+    showToast("이미지 공유에 실패했어요.");
   }
+}
 
-  return lines.join("\n");
+function downloadPreparedImage() {
+  if (!hasFreshShareImage()) return;
+  const result = requestDownload(document, preparedShare.url, preparedShare.fileName);
+  $("shareStatus").textContent = result.status === "requested"
+    ? "PNG 저장을 요청했어요. 저장되지 않으면 이미지를 길게 눌러주세요."
+    : "자동 저장을 완료하지 못했어요. 이미지를 길게 눌러 저장해주세요.";
 }
 
 function showToast(message) {
@@ -220,13 +241,25 @@ function setTab(tabName) {
   $("tabResult").classList.toggle("active", tabName === "result");
 }
 
-function renderSummary() {
-  const { total, perHead } = calcResult();
+function renderSummary(calculation) {
+  const { total, perHead } = calculation;
   const targets = getTargets();
+  const customCount = state.payments.filter((payment) => payment.participantMode === "custom").length;
 
-  $("summaryTotal").textContent = won(total);
-  $("summaryTargetCount").textContent = `${targets.length}명 · ${state.payments.length}건`;
-  $("summaryPerHead").textContent = won(perHead);
+  if (customCount === 0) {
+    $("summaryPrimaryLabel").textContent = "1인당";
+    $("summaryPerHead").textContent = won(perHead);
+    $("summarySecondaryLabel").textContent = "총액";
+    $("summaryTotal").textContent = won(total);
+    $("summaryTargetCount").textContent = `${targets.length}명 · ${state.payments.length}건`;
+    return;
+  }
+
+  $("summaryPrimaryLabel").textContent = "총 결제액";
+  $("summaryPerHead").textContent = won(total);
+  $("summarySecondaryLabel").textContent = "정산";
+  $("summaryTotal").textContent = "맞춤 포함";
+  $("summaryTargetCount").textContent = `${state.payments.length}건 · 예외 ${customCount}건`;
 }
 
 function renderStartOverCard() {
@@ -287,15 +320,110 @@ function renderMembers() {
 
     card.querySelector("button").addEventListener("click", () => {
       if (!confirm(`${name}님을 삭제할까요?\n해당 멤버의 결제 내역도 함께 삭제됩니다.`)) return;
-      state.names = state.names.filter((n) => n !== name);
-      delete state.targets[name];
-      state.payments = state.payments.filter((p) => p.payer !== name);
-      if (state.lastPayer === name) state.lastPayer = state.names[0] || null;
+      const result = removeMember(state, name);
+      if (!result.ok) {
+        if (result.reason === "empty-custom-participants") {
+          const payment = result.blockingPayments[0];
+          const label = payment.place || `${payment.payer} · ${won(payment.amount)}`;
+          showToast(`삭제할 수 없어요. 예외 결제 '${label}'의 유일한 부담자예요.`);
+        }
+        return;
+      }
+      state = result.state;
+      if (!state.payments.some((payment) => payment.id === editingPaymentId)) editingPaymentId = null;
+      if (!state.payments.some((payment) => payment.id === exceptionEditingPaymentId)) {
+        exceptionEditingPaymentId = null;
+        exceptionDraftParticipants = null;
+      }
       saveAndRender();
     });
 
     list.appendChild(card);
   });
+}
+
+function startPaymentEdit(paymentId) {
+  editingPaymentId = paymentId;
+  renderPayments();
+  window.setTimeout(() => {
+    const input = document.querySelector(`[data-edit-payment-id="${CSS.escape(paymentId)}"] .payment-edit-name`);
+    if (input) input.focus();
+  }, 0);
+}
+
+function cancelPaymentEdit() {
+  editingPaymentId = null;
+  renderPayments();
+}
+
+function savePaymentEdit(paymentId, panel) {
+  const payer = panel.querySelector(".payment-edit-name").value.trim();
+  const amount = parseAmount(panel.querySelector(".payment-edit-amount").value);
+  const place = panel.querySelector(".payment-edit-place").value.trim();
+  const result = updatePayment(state, paymentId, { payer, amount, place });
+
+  if (!result.ok) {
+    showToast(result.reason === "invalid-payer" ? "이름을 입력해주세요." : "금액을 입력해주세요.");
+    return;
+  }
+
+  state = result.state;
+  editingPaymentId = null;
+  saveAndRender();
+  showToast("결제 내역을 수정했어요.");
+}
+
+function createPaymentEditPanel(payment) {
+  const panel = document.createElement("div");
+  panel.className = "payment-edit-panel";
+  panel.dataset.editPaymentId = payment.id;
+
+  const fields = document.createElement("div");
+  fields.className = "payment-edit-fields";
+
+  const nameInput = document.createElement("input");
+  nameInput.className = "payment-edit-input payment-edit-name";
+  nameInput.value = payment.payer;
+  nameInput.placeholder = "결제자";
+
+  const amountInput = document.createElement("input");
+  amountInput.className = "payment-edit-input payment-edit-amount";
+  amountInput.value = payment.amount.toLocaleString("ko-KR");
+  amountInput.placeholder = "금액";
+  amountInput.inputMode = "numeric";
+  amountInput.addEventListener("input", () => {
+    const amount = parseAmount(amountInput.value);
+    amountInput.value = amount ? amount.toLocaleString("ko-KR") : "";
+  });
+
+  const placeInput = document.createElement("input");
+  placeInput.className = "payment-edit-input payment-edit-place";
+  placeInput.value = payment.place;
+  placeInput.placeholder = "사용처 (선택)";
+
+  fields.append(nameInput, amountInput, placeInput);
+
+  const actions = document.createElement("div");
+  actions.className = "payment-edit-actions";
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "small-btn";
+  cancelButton.textContent = "취소";
+  cancelButton.addEventListener("click", cancelPaymentEdit);
+  const saveButton = document.createElement("button");
+  saveButton.className = "small-btn primary";
+  saveButton.textContent = "수정 저장";
+  saveButton.addEventListener("click", () => savePaymentEdit(payment.id, panel));
+  actions.append(cancelButton, saveButton);
+
+  [nameInput, amountInput, placeInput].forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") savePaymentEdit(payment.id, panel);
+      if (event.key === "Escape") cancelPaymentEdit();
+    });
+  });
+
+  panel.append(fields, actions);
+  return panel;
 }
 
 function renderPayments() {
@@ -314,23 +442,38 @@ function renderPayments() {
     .reverse();
   const visiblePayments = showAllPayments ? recentPayments : recentPayments.slice(0, 4);
 
-  visiblePayments.forEach(({ payment, index }) => {
+  visiblePayments.forEach(({ payment }) => {
     const card = document.createElement("div");
     card.className = "item-card";
     card.style.borderLeftColor = colorOf(payment.payer);
 
+    const customBadge = payment.participantMode === "custom" ? `<span class="custom-badge">예외</span>` : "";
+    const placeMeta = payment.place ? `<div class="item-meta">${escapeHtml(payment.place)}</div>` : "";
     card.innerHTML = `
-      <div class="item-title" style="color:${colorOf(payment.payer)};">${escapeHtml(payment.payer)}</div>
+      <div class="item-main">
+        <div class="item-title" style="color:${colorOf(payment.payer)};">${escapeHtml(payment.payer)}${customBadge}</div>
+        ${placeMeta}
+      </div>
       <div class="item-amount">${won(payment.amount)}</div>
-      <button class="delete-btn">삭제</button>
+      <div class="payment-actions">
+        <button class="edit-btn">수정</button>
+        <button class="delete-btn">삭제</button>
+      </div>
     `;
 
-    card.querySelector("button").addEventListener("click", () => {
-      state.payments.splice(index, 1);
+    card.querySelector(".edit-btn").addEventListener("click", () => startPaymentEdit(payment.id));
+    card.querySelector(".delete-btn").addEventListener("click", () => {
+      state.payments = state.payments.filter((item) => item.id !== payment.id);
+      if (editingPaymentId === payment.id) editingPaymentId = null;
+      if (exceptionEditingPaymentId === payment.id) {
+        exceptionEditingPaymentId = null;
+        exceptionDraftParticipants = null;
+      }
       saveAndRender();
     });
 
     list.appendChild(card);
+    if (editingPaymentId === payment.id) list.appendChild(createPaymentEditPanel(payment));
   });
 
   if (recentPayments.length > 4) {
@@ -382,20 +525,154 @@ function renderTargets() {
   });
 }
 
-function renderResult() {
+function openExceptionEditor(payment) {
+  exceptionEditingPaymentId = payment.id;
+  exceptionDraftParticipants = new Set(
+    payment.participantMode === "custom" ? payment.participants : getTargets(),
+  );
+  renderExceptions();
+}
+
+function closeExceptionEditor() {
+  exceptionEditingPaymentId = null;
+  exceptionDraftParticipants = null;
+  renderExceptions();
+}
+
+function applyExceptionDraft() {
+  const participants = state.names.filter((name) => exceptionDraftParticipants.has(name));
+  const result = setCustomParticipants(state, exceptionEditingPaymentId, participants);
+  if (!result.ok) {
+    showToast(result.reason === "empty-custom-participants"
+      ? "부담자를 한 명 이상 선택해주세요."
+      : "결제 내역을 찾을 수 없어요.");
+    return;
+  }
+  state = result.state;
+  exceptionEditingPaymentId = null;
+  exceptionDraftParticipants = null;
+  saveAndRender();
+  showToast("결제별 부담자를 적용했어요.");
+}
+
+function resetExceptionToDefault() {
+  const result = resetPaymentParticipants(state, exceptionEditingPaymentId);
+  if (!result.ok) {
+    showToast("결제 내역을 찾을 수 없어요.");
+    return;
+  }
+  state = result.state;
+  exceptionEditingPaymentId = null;
+  exceptionDraftParticipants = null;
+  saveAndRender();
+  showToast("기본 정산으로 되돌렸어요.");
+}
+
+function renderExceptions() {
+  const list = $("exceptionPaymentList");
+  const editor = $("exceptionEditor");
+  const customCount = state.payments.filter((payment) => payment.participantMode === "custom").length;
+  $("customPaymentCountBadge").textContent = `예외 ${customCount}건`;
+  list.innerHTML = "";
+  editor.innerHTML = "";
+
+  const selectedPayment = state.payments.find((payment) => payment.id === exceptionEditingPaymentId);
+  if (!selectedPayment) {
+    exceptionEditingPaymentId = null;
+    exceptionDraftParticipants = null;
+  } else {
+    exceptionDraftParticipants = new Set(
+      state.names.filter((name) => exceptionDraftParticipants && exceptionDraftParticipants.has(name)),
+    );
+  }
+
+  if (!state.payments.length) {
+    list.innerHTML = `<p class="empty-text">설정할 결제 내역이 없어요.</p>`;
+    return;
+  }
+
+  state.payments.slice().reverse().forEach((payment) => {
+    const button = document.createElement("button");
+    button.className = `exception-payment-btn ${payment.id === exceptionEditingPaymentId ? "selected" : ""}`;
+    const label = document.createElement("span");
+    label.textContent = payment.place ? `${payment.payer} · ${payment.place}` : payment.payer;
+    if (payment.participantMode === "custom") {
+      const badge = document.createElement("span");
+      badge.className = "custom-badge";
+      badge.textContent = "예외";
+      label.append(" ", badge);
+    }
+    const amount = document.createElement("span");
+    amount.textContent = won(payment.amount);
+    button.append(label, amount);
+    button.addEventListener("click", () => openExceptionEditor(payment));
+    list.appendChild(button);
+  });
+
+  if (!selectedPayment) return;
+
+  const card = document.createElement("div");
+  card.className = "exception-editor-card";
+  const title = document.createElement("p");
+  title.className = "exception-editor-title";
+  title.textContent = `${selectedPayment.place || selectedPayment.payer} 부담자 선택`;
+  const chips = document.createElement("div");
+  chips.className = "target-chip-wrap";
+
+  state.names.forEach((name) => {
+    const checked = exceptionDraftParticipants.has(name);
+    const button = document.createElement("button");
+    button.className = `target-chip ${checked ? "active" : "inactive"}`;
+    button.textContent = name;
+    if (checked) button.style.borderColor = colorOf(name);
+    button.addEventListener("click", () => {
+      if (checked) exceptionDraftParticipants.delete(name);
+      else exceptionDraftParticipants.add(name);
+      renderExceptions();
+    });
+    chips.appendChild(button);
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "exception-actions";
+  if (selectedPayment.participantMode === "custom") {
+    const defaultButton = document.createElement("button");
+    defaultButton.className = "small-btn";
+    defaultButton.textContent = "기본 정산으로 되돌리기";
+    defaultButton.addEventListener("click", resetExceptionToDefault);
+    actions.appendChild(defaultButton);
+  }
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "small-btn";
+  cancelButton.textContent = "취소";
+  cancelButton.addEventListener("click", closeExceptionEditor);
+  const applyButton = document.createElement("button");
+  applyButton.className = "small-btn primary";
+  applyButton.textContent = "적용";
+  applyButton.addEventListener("click", applyExceptionDraft);
+  actions.append(cancelButton, applyButton);
+  card.append(title, chips, actions);
+  editor.appendChild(card);
+}
+
+function renderResult(calculation) {
   const list = $("resultList");
-  const { transfers } = calcResult();
-  const targets = getTargets();
+  const { transfers, errors } = calculation;
 
   list.innerHTML = "";
 
-  if (!state.payments.length || !targets.length) {
-    list.innerHTML = `<div class="notice">결제 내역과 정산 대상자를 확인해주세요.</div>`;
+  if (!state.payments.length || errors.length > 0) {
+    const message = errors.some((error) => error.code === "empty-default-participants")
+      ? "기본 정산 대상자를 한 명 이상 포함해주세요."
+      : "결제 내역과 정산 대상자를 확인해주세요.";
+    list.innerHTML = `<div class="notice">${message}</div>`;
     $("copyResultBtn").style.display = "none";
+    $("createPngBtn").style.display = "none";
     return;
   }
 
   $("copyResultBtn").style.display = "block";
+  $("createPngBtn").style.display = "block";
 
   if (!transfers.length) {
     list.innerHTML = `<div class="success">🍯 정산 내역 없음 — 모두 딱 맞게 냈어요!</div>`;
@@ -421,17 +698,20 @@ function renderResult() {
 
 function render() {
   normalizeState();
+  const calculation = calcResult();
   renderStartOverCard();
-  renderSummary();
+  renderSummary(calculation);
   renderPayerButtons();
   renderMembers();
   renderPayments();
   renderTargets();
-  renderResult();
+  renderExceptions();
+  renderResult(calculation);
   updateSaveButtonText();
 }
 
 function saveAndRender() {
+  invalidateShareImage();
   normalizeState();
   saveState();
   render();
@@ -465,6 +745,7 @@ function addMember() {
 function addPayment() {
   const name = getPayerInputName();
   const amount = parseAmount($("amountInput").value);
+  const place = $("placeInput").value.trim();
 
   if (!name) {
     showToast("이름을 입력해주세요.");
@@ -476,21 +757,30 @@ function addPayment() {
     return;
   }
 
-  if (!state.names.includes(name)) {
-    state.names.push(name);
-    state.targets[name] = true;
-  } else if (typeof state.targets[name] !== "boolean") {
-    state.targets[name] = true;
+  const result = storeDefaultPayment(
+    localStorage,
+    STORAGE_KEY,
+    state,
+    { payer: name, amount, place },
+    { idFactory: createPaymentId },
+  );
+  if (!result.ok) {
+    if (result.reason === "empty-default-participants") {
+      showToast("기본 정산 대상자가 모두 제외되어 있어요. 결과 탭에서 한 명 이상 포함해주세요.");
+    } else if (result.reason === "storage-write-failed") {
+      showToast("결제를 저장하지 못했어요. 입력 내용은 그대로 유지됩니다.");
+    } else {
+      showToast("결제 정보를 확인해주세요.");
+    }
+    return;
   }
 
-  state.payments.push({
-    payer: name,
-    amount,
-  });
-
-  state.lastPayer = name;
+  state = result.state;
+  invalidateShareImage();
   $("amountInput").value = "";
-  saveAndRender();
+  $("placeInput").value = "";
+  $("paymentOptions").open = false;
+  render();
   $("amountInput").focus({ preventScroll: true });
   showSaveSuccess(`${name} · ${won(amount)} 저장됨`);
 }
@@ -500,6 +790,9 @@ function clearPaymentsOnly() {
 
   state.payments = [];
   showAllPayments = false;
+  editingPaymentId = null;
+  exceptionEditingPaymentId = null;
+  exceptionDraftParticipants = null;
   saveAndRender();
   closeStartOverDetails();
 }
@@ -508,8 +801,11 @@ function resetAll() {
   if (!confirm("전체 새로 시작할까요? 멤버와 결제내역이 모두 삭제됩니다.")) return;
 
   const scrollY = window.scrollY;
-  state = { names: [], payments: [], targets: {}, lastPayer: null };
+  state = createInitialState();
   showAllPayments = false;
+  editingPaymentId = null;
+  exceptionEditingPaymentId = null;
+  exceptionDraftParticipants = null;
   saveAndRender();
   closeStartOverDetails();
 
@@ -584,6 +880,9 @@ function bindEvents() {
   $("amountInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") addPayment();
   });
+  $("placeInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") addPayment();
+  });
 
   $("savePaymentBtn").addEventListener("click", addPayment);
   $("clearPaymentsBtn").addEventListener("click", clearPaymentsOnly);
@@ -620,11 +919,21 @@ function bindEvents() {
     }
   });
 
+  $("createPngBtn").addEventListener("click", prepareShareImage);
+  $("sharePngBtn").addEventListener("click", sharePreparedImage);
+  $("downloadPngBtn").addEventListener("click", downloadPreparedImage);
+  $("closeSharePanelBtn").addEventListener("click", () => {
+    $("sharePanel").hidden = true;
+  });
+
   $("resetBtn").addEventListener("click", resetAll);
+  window.addEventListener("beforeunload", () => {
+    if (preparedShare?.url) URL.revokeObjectURL(preparedShare.url);
+  });
 }
 
 loadState();
 normalizeState();
 bindEvents();
-saveState();
 render();
+if (startupStorageMessage) showToast(startupStorageMessage);

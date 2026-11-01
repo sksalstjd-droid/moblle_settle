@@ -16,11 +16,11 @@
     <section class="summary-panel" aria-label="정산 요약">
       <div class="summary-primary">
         <strong id="summaryPerHead">0원</strong>
-        <span>1인당</span>
+        <span id="summaryPrimaryLabel">1인당</span>
       </div>
       <div class="summary-secondary">
         <div>
-          <span>총액</span>
+          <span id="summarySecondaryLabel">총액</span>
           <strong id="summaryTotal">0원</strong>
         </div>
         <div>
@@ -59,6 +59,12 @@
 
         <label class="field-label" for="amountInput">금액</label>
         <input id="amountInput" class="amount-input" inputmode="numeric" pattern="[0-9]*" placeholder="0" />
+
+        <details id="paymentOptions" class="payment-options">
+          <summary>사용처 추가 <span>선택</span></summary>
+          <label class="field-label" for="placeInput">사용처</label>
+          <input id="placeInput" class="place-input" placeholder="예: 식당, 카페" autocomplete="off" />
+        </details>
 
         <button id="savePaymentBtn" class="primary-btn full">결제 저장</button>
 
@@ -111,6 +117,16 @@
         </div>
 
         <div id="targetList" class="target-chip-wrap"></div>
+
+        <details id="paymentExceptions" class="payment-exceptions">
+          <summary>
+            <span>결제별 예외 설정</span>
+            <strong id="customPaymentCountBadge">예외 0건</strong>
+          </summary>
+          <p class="exception-help">필요한 결제만 선택해 부담자를 따로 지정할 수 있어요.</p>
+          <div id="exceptionPaymentList" class="exception-payment-list"></div>
+          <div id="exceptionEditor" class="exception-editor"></div>
+        </details>
       </section>
 
       <section class="card">
@@ -121,12 +137,28 @@
 
         <div id="resultList" class="list"></div>
         <button id="copyResultBtn" class="primary-btn full">결과 복사하기</button>
+        <button id="createPngBtn" class="ghost-btn share-create-btn">PNG 공유 이미지 만들기</button>
+        <section id="sharePanel" class="share-panel" hidden aria-label="공유 이미지 미리보기">
+          <div class="share-panel-title">
+            <strong>공유 이미지 미리보기</strong>
+            <button id="closeSharePanelBtn" class="small-btn">닫기</button>
+          </div>
+          <p id="shareStatus" class="share-status" role="status" aria-live="polite"></p>
+          <img id="sharePreview" alt="정산 결과 공유 이미지 미리보기" />
+          <div class="share-actions">
+            <button id="sharePngBtn" class="primary-btn">이미지 공유</button>
+            <button id="downloadPngBtn" class="ghost-btn">PNG 저장</button>
+          </div>
+          <p id="shareSaveHint" class="share-save-hint">저장이 동작하지 않으면 이미지를 길게 눌러 저장하세요.</p>
+        </section>
       </section>
     </section>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </main>
 
+  <script src="{{ url_for('static', filename='settlement-core.js') }}"></script>
+  <script src="{{ url_for('static', filename='share-report.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
