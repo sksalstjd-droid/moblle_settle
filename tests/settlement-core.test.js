@@ -472,25 +472,25 @@ test("custom 부담자가 0명이면 정상 결제로 받아들이지 않는다"
   assert.ok(calculateSettlement(state).errors.some((error) => error.code === "empty-custom-participants"));
 });
 
-test("전역 제외는 custom 부담자에서도 제거하고 결제액 기록은 유지한다", () => {
+test("전역 제외는 custom 선택 기록을 보존하고 실제 계산에서만 제외한다", () => {
   const state = makeState(["A", "B", "C"], [
     { payer: "A", amount: 1001, participantMode: "custom", participants: ["A", "B"] },
   ]);
   const result = setGlobalTargets(state, ["B", "C"]);
   assert.equal(result.ok, true);
-  assert.deepEqual(result.state.payments[0].participants, ["B"]);
+  assert.deepEqual(result.state.payments[0].participants, ["A", "B"]);
   const calculation = calculateSettlement(result.state);
   assert.equal(calculation.paid.A, 1001);
   assert.equal(calculation.owed.B, 1001);
 });
 
-test("저장된 v2 custom 부담자와 전역 제외가 충돌하면 결제는 보존하고 계산에서 제외한다", () => {
+test("저장된 v2 custom 선택은 전역 제외와 충돌해도 보존하고 유효 인원이 없으면 계산 오류를 반환한다", () => {
   const state = makeState(["A", "B"], [
     { id: "legacy-custom", payer: "A", amount: 2500, participantMode: "custom", participants: ["A"] },
   ], { A: false, B: true });
   const normalized = normalizeStateData(state);
   assert.equal(normalized.state.payments.length, 1);
-  assert.deepEqual(normalized.state.payments[0].participants, []);
+  assert.deepEqual(normalized.state.payments[0].participants, ["A"]);
   const calculation = calculateSettlement(normalized.state);
   assert.equal(calculation.total, 2500);
   assert.equal(calculation.paid.A, 2500);
@@ -498,14 +498,26 @@ test("저장된 v2 custom 부담자와 전역 제외가 충돌하면 결제는 �
   assert.deepEqual(calculation.transfers, []);
 });
 
-test("전역 재포함은 제거된 custom 부담자를 자동 복원하지 않는다", () => {
+test("전역 재포함은 보존된 custom 선택 기록을 자동 복원한다", () => {
   const state = makeState(["A", "B", "C"], [
     { payer: "A", amount: 1000, participantMode: "custom", participants: ["A", "B"] },
   ]);
   const excluded = setGlobalTargets(state, ["B", "C"]);
   const included = setGlobalTargets(excluded.state, ["A", "B", "C"]);
+  assert.deepEqual(included.state.payments[0].participants, ["A", "B"]);
+  assert.equal(calculateSettlement(included.state).owed.A, 500);
+  assert.equal(calculateSettlement(included.state).owed.B, 500);
+});
+
+test("전역 재포함은 원래 선택되지 않았던 custom 멤버를 추가하지 않는다", () => {
+  const state = makeState(["A", "B", "C"], [
+    { payer: "A", amount: 900, participantMode: "custom", participants: ["B"] },
+  ]);
+  const excluded = setGlobalTargets(state, ["A", "B"]);
+  const included = setGlobalTargets(excluded.state, ["A", "B", "C"]);
   assert.deepEqual(included.state.payments[0].participants, ["B"]);
-  assert.equal(calculateSettlement(included.state).owed.A, 0);
+  assert.equal(calculateSettlement(included.state).owed.B, 900);
+  assert.equal(calculateSettlement(included.state).owed.C, 0);
 });
 
 test("전역 변경으로 custom 부담자가 0명이 되면 전체 변경을 차단한다", () => {
@@ -563,6 +575,45 @@ test("개별 부담자 저장은 전역 제외자를 받아들이지 않는다",
   const result = setCustomParticipants(state, "p1", ["A"]);
   assert.equal(result.ok, false);
   assert.equal(result.reason, "empty-custom-participants");
+});
+
+test("custom 수정 중 전역 제외자의 숨겨진 선택을 보존하고 유효 인원만 기본 복귀에 사용한다", () => {
+  const state = makeState(["A", "B", "C"], [
+    { payer: "A", amount: 1000, participantMode: "custom", participants: ["A", "B"] },
+  ], { A: false, B: true, C: true });
+  const keptCustom = setCustomParticipants(state, "p1", ["A", "B", "C"]);
+  assert.equal(keptCustom.state.payments[0].participantMode, "default");
+  assert.equal(keptCustom.state.payments[0].participants, null);
+
+  const subset = setCustomParticipants(state, "p1", ["A", "B"]);
+  assert.equal(subset.state.payments[0].participantMode, "custom");
+  assert.deepEqual(subset.state.payments[0].participants, ["A", "B"]);
+  assert.equal(calculateSettlement(subset.state).owed.B, 1000);
+});
+
+test("전역 제외된 custom 선택을 포함해 저장하고 재로드한 뒤 재포함하면 부담액을 복원한다", () => {
+  const storage = { value: null, getItem() { return this.value; }, setItem(_key, value) { this.value = value; } };
+  const state = makeState(["A", "B", "C"], [
+    { payer: "A", amount: 1001, participantMode: "custom", participants: ["A", "B"] },
+  ], { A: false, B: true, C: true });
+  assert.deepEqual(state.payments[0].participants, ["A", "B"]);
+  assert.equal(saveStateToStorage(storage, "v2", state).ok, true);
+  const loaded = loadStateFromStorage(storage, "v2").state;
+  assert.deepEqual(loaded.payments[0].participants, ["A", "B"]);
+  const included = setGlobalTargets(loaded, ["A", "B", "C"]);
+  const calculation = calculateSettlement(included.state);
+  assert.equal(calculation.owed.A, 501);
+  assert.equal(calculation.owed.B, 500);
+});
+
+test("custom 명단에서 유일한 유효 인원을 삭제하면 멤버 삭제를 차단한다", () => {
+  const state = makeState(["A", "B", "C"], [
+    { payer: "A", amount: 1000, participantMode: "custom", participants: ["B", "C"] },
+  ], { A: true, B: true, C: false });
+  const result = removeMember(state, "B");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "empty-custom-participants");
+  assert.deepEqual(result.blockingPayments.map((payment) => payment.id), ["p1"]);
 });
 
 test("전역 대상자가 0명인 기본 결제를 오류로 보고한다", () => {

@@ -14,18 +14,13 @@
     </header>
 
     <section class="summary-panel" aria-label="정산 요약">
-      <div class="summary-primary">
-        <strong id="summaryPerHead">0원</strong>
-        <span id="summaryPrimaryLabel">1인당</span>
+      <div class="summary-total">
+        <strong id="summaryTotalAmount">0원</strong>
+        <span>총 결제액</span>
       </div>
-      <div class="summary-secondary">
-        <div>
-          <span id="summarySecondaryLabel">총액</span>
-          <strong id="summaryTotal">0원</strong>
-        </div>
-        <div>
-          <span id="summaryTargetCount">0명 · 0건</span>
-        </div>
+      <div class="summary-payment-count">
+        <strong id="summaryPaymentCount">0건</strong>
+        <span>결제 내역</span>
       </div>
     </section>
 
@@ -39,7 +34,6 @@
         <details class="start-over-details">
           <summary>
             <span>새 정산 시작</span>
-            <strong id="startOverSummary">이전 기록 있음</strong>
           </summary>
           <p class="start-over-text">이전 정산 기록이 남아 있어요.</p>
           <div class="start-over-actions">
@@ -109,20 +103,18 @@
 
     <section id="tabResult" class="tab-page">
       <section class="card">
-        <div class="section-title">
+        <div class="section-title result-target-title">
           <h2>정산 대상자</h2>
-          <span id="targetCountBadge">0명</span>
-          <button id="targetAllToggleBtn" class="target-all-toggle">모두 포함</button>
+          <span id="targetCountBadge" class="target-count-badge"><span>0명 선택</span><span>전체 0명</span></span>
         </div>
 
         <div id="targetList" class="target-chip-wrap"></div>
 
         <details id="paymentExceptions" class="payment-exceptions">
           <summary>
-            <span>결제별 예외 설정</span>
-            <strong id="customPaymentCountBadge">예외 0건</strong>
+            <span>결제별 정산 인원</span>
+            <strong id="customPaymentCountBadge">0건</strong>
           </summary>
-          <p class="exception-help">필요한 결제만 선택해 부담자를 따로 지정할 수 있어요.</p>
           <div id="exceptionPaymentList" class="exception-payment-list"></div>
           <div id="exceptionEditor" class="exception-editor"></div>
         </details>
@@ -131,12 +123,11 @@
       <section class="card">
         <div class="section-title">
           <h2>정산 결과</h2>
-          <span>자동 계산</span>
         </div>
 
         <div id="resultList" class="list"></div>
-        <button id="copyResultBtn" class="primary-btn full">결과 복사하기</button>
-        <button id="createPngBtn" class="ghost-btn share-create-btn">PNG 공유 이미지 만들기</button>
+        <button id="copyResultBtn" class="primary-btn full">결과 복사</button>
+        <button id="createPngBtn" class="ghost-btn share-create-btn">이미지 공유</button>
         <section id="sharePanel" class="share-panel" hidden aria-label="공유 이미지 미리보기">
           <div class="share-panel-title">
             <strong>공유 이미지 미리보기</strong>

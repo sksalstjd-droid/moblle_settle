@@ -28,18 +28,25 @@ test("빠른 입력 필드는 세로 순서로 배치하고 이름 선택은 저
   assert.match(css, /\.quick-input-fields\s*\{\s*display:\s*grid;/);
 });
 
-test("요청한 입력 탭 문구만 바뀌고 상단 총 결제액 요약을 유지한다", () => {
+test("입력 탭 문구를 유지하고 빠른 입력의 기존 요약 기능은 변경하지 않는다", () => {
   assert.doesNotMatch(appSource, /맞춤 포함|빠른 이름 선택/);
   assert.match(appSource, /<span>결제<\/span>[\s\S]*?won\(paid\[name\]/);
-  assert.match(appSource, /summaryPrimaryLabel"\)\.textContent = "총 결제액"/);
-  assert.match(appSource, /summaryTargetCount"\)\.textContent = `\$\{state\.payments\.length\}건 · 예외 \$\{customCount\}건`/);
+  assert.match(html, /id="summaryTotalAmount"/);
+  assert.match(html, /id="summaryPaymentCount"/);
+  assert.match(appSource, /function renderSummary\(calculation\)[\s\S]*?summaryTotalAmount"\)\.textContent = won\(calculation\.total\)[\s\S]*?summaryPaymentCount"\)\.textContent = `\$\{state\.payments\.length\}건`/);
+  assert.doesNotMatch(html.slice(0, html.indexOf('<nav class="tab-bar"')), /1인당|인원 변경|정산<\/span>/);
 });
 
-test("최근 결제 행에서만 예외 배지를 빼고 결과 탭의 예외 표시는 유지한다", () => {
+test("최근 결제 행에는 정산 인원 표시가 없고 결과 결제 목록에는 실제 인원수가 표시된다", () => {
   const paymentListSource = appSource.match(/function renderPayments\([\s\S]*?\n}\n\nfunction renderTargets/)?.[0] || "";
   const exceptionSource = appSource.match(/function renderExceptions\([\s\S]*?\n}\n\nfunction renderResult/)?.[0] || "";
   assert.doesNotMatch(paymentListSource, /customBadge|custom-badge/);
-  assert.match(exceptionSource, /badge\.className = "custom-badge"/);
+  assert.match(exceptionSource, /detail\.type === "custom-payment" && detail\.paymentId === payment\.id/);
+  assert.match(exceptionSource, /paymentDetail\?\.participants\.length/);
+  assert.match(exceptionSource, /badge\.className = "participant-count-badge"/);
+  assert.match(exceptionSource, /badge\.textContent = `\$\{participantCount\}명`/);
+  assert.match(exceptionSource, /Number\.isInteger\(participantCount\) && participantCount > 0/);
+  assert.doesNotMatch(exceptionSource, /textContent = "개별"|custom-badge/);
 });
 
 test("결제 수정창은 이름·금액과 사용처·버튼의 2행 구조다", () => {
@@ -125,16 +132,98 @@ test("빠른 입력은 금액·사용처·멤버 등록을 한 저장 경로로 
   assert.match(appSource, /storeMemberAddition\(localStorage, STORAGE_KEY, state, name\)/);
   assert.equal((appSource.match(/if \(event\.key === "Enter"\) addPayment\(\)/g) || []).length, 3);
   assert.match(appSource, /\$\("payerButtons"\)[\s\S]*?\$\("amountInput"\)\.focus\(\)/);
+  assert.match(appSource, /quickSavedPayer = null;[\s\S]*?clearQuickInputErrors\(\);[\s\S]*?payerInput"\)\.value = name;[\s\S]*?amountInput"\)\.focus\(\)/);
   assert.match(appSource, /amountInput\.value = "";[\s\S]*?\$\("placeInput"\)\.value = "";[\s\S]*?amountInput\.focus/);
 });
 
-test("예외 부담자 선택은 즉시 저장하고 전역 제외자를 잠금 표시한다", () => {
+test("기존 이름 칩 선택은 오류 문구를 띄우지 않고, 중복 차단과 신규 멤버 등록을 유지한다", () => {
+  const buttonStateSource = appSource.match(/function updateSaveButtonText\([\s\S]*?\n}\n\nfunction escapeHtml/)?.[0] || "";
+  const addSource = appSource.match(/function addPayment\([\s\S]*?\n}\n\nfunction clearPaymentsOnly/)?.[0] || "";
+  const chipSource = appSource.match(/function renderPayerButtons\([\s\S]*?\n}\n\nfunction renderMembers/)?.[0] || "";
+  assert.match(chipSource, /clearQuickInputErrors\(\)/);
+  assert.match(appSource, /function clearQuickInputErrors\(\)[\s\S]*?querySelectorAll\("\.quick-input-fields input"\)[\s\S]*?clearQuickInputError/);
+  assert.match(buttonStateSource, /button\.textContent = "이미 등록됨";\s*button\.disabled = true;\s*return;/);
+  assert.doesNotMatch(buttonStateSource, /showQuickInputNotice/);
+  assert.match(addSource, /if \(state\.names\.includes\(entry\.payer\)\)[\s\S]*?showQuickInputNotice\("이미 등록된 멤버/);
+  assert.match(addSource, /entry\.action === "add-member"[\s\S]*?addQuickMember\(entry\.payer\)/);
+  assert.match(appSource, /function addQuickMember\([\s\S]*?storeMemberAddition\(localStorage, STORAGE_KEY, state, name\)/);
+});
+
+test("새 정산 시작은 유지하고 멤버·결제 수 요약은 표시하지 않는다", () => {
+  const startOver = html.match(/<section id="startOverCard"[\s\S]*?<\/section>/)?.[0] || "";
+  assert.match(startOver, /새 정산 시작/);
+  assert.match(startOver, /clearPaymentsBtn|resetBtn/);
+  assert.doesNotMatch(startOver, /startOverSummary|멤버 [^<]*명|결제 [^<]*건/);
+  assert.doesNotMatch(appSource, /function renderStartOverCard|startOverSummary/);
+});
+
+test("개별 정산 인원 선택은 즉시 저장하고 전역 제외자를 비활성화한다", () => {
   assert.match(appSource, /function togglePaymentParticipant\([\s\S]*?setCustomParticipants\([\s\S]*?commitState\(result\.state\)/);
   assert.match(appSource, /function commitState\(nextState(?:, onSuccess)?\)[\s\S]*?saveStateToStorage\(localStorage, STORAGE_KEY, nextState\)[\s\S]*?if \(!result\.ok\)[\s\S]*?state = nextState/);
   assert.match(appSource, /button\.disabled = locked/);
-  assert.match(appSource, /전체 정산 제외 🔒/);
+  assert.doesNotMatch(appSource, /전체 정산 제외|🔒/);
+  assert.match(appSource, /button\.setAttribute\("aria-pressed", String\(checked\)\)/);
   const exceptionsSource = appSource.match(/function renderExceptions\([\s\S]*?\n}\n\nfunction renderResult/)?.[0] || "";
   assert.doesNotMatch(exceptionsSource, /textContent = "적용"|textContent = "취소"|기본 정산으로 되돌리기/);
-  assert.match(appSource, /selected\.size === 0[\s\S]*?부담자는 한 명 이상 선택해야 해요/);
+  assert.match(appSource, /activeSelectedCount === 0[\s\S]*?정산 인원은 한 명 이상 선택해야 해요/);
   assert.match(css, /\.target-chip\.locked/);
+  assert.doesNotMatch(css, /target-chip::after|content: "✓"|content: "✕"/);
+  assert.match(appSource, /payment\.participants\.slice\(\)/);
+  assert.match(appSource, /activeSelectedCount = state\.names\.filter\([\s\S]*?state\.targets\[member\] !== false && selected\.has\(member\)/);
+});
+
+test("결과 탭 상태 표현은 아이콘 없이 스타일과 이름만 사용하고 안내 문구를 제거한다", () => {
+  const resultHtml = html.slice(html.indexOf('id="tabResult"'));
+  const exceptionSource = appSource.match(/function renderExceptions\([\s\S]*?\n}\n\nfunction renderResult/)?.[0] || "";
+  assert.match(resultHtml, /결제별 정산 인원/);
+  assert.doesNotMatch(resultHtml, /필요한 결제만 선택해 부담자를 따로 지정할 수 있어요|자동 계산|결제별 예외 설정/);
+  assert.match(appSource, /selectedCount\.textContent = `\$\{targetCount\}명 선택`/);
+  assert.match(appSource, /memberCount\.textContent = `전체 \$\{totalCount\}명`/);
+  assert.match(appSource, /button\.textContent = name;[\s\S]*?button\.disabled = locked/);
+  assert.match(exceptionSource, /정산 인원 선택/);
+  assert.doesNotMatch(exceptionSource, /textContent = `[^`]*[·|/][^`]*`|전체 정산 제외|부담자 선택|부담자 설정/);
+  assert.match(css, /\.target-chip\.active\s*\{[\s\S]*?background:/);
+  assert.match(css, /\.target-chip\.inactive\s*\{/);
+  assert.match(css, /\.target-chip\.locked\s*\{/);
+  assert.match(appSource, /className = `chip target-chip \$\{checked \? "active" : "inactive"\}`/);
+  assert.match(appSource, /className = `chip target-chip \$\{locked \? "locked" : checked \? "active" : "inactive"\}`/);
+  assert.match(appSource, /button\.style\.color = colorOf\(name\)/);
+  assert.match(css, /\.chip\s*\{[\s\S]*?min-height:\s*32px[\s\S]*?padding:\s*0 10px[\s\S]*?font-size:\s*13px/);
+  assert.match(css, /\.chip\s*\{[\s\S]*?background:\s*#eef2f7/);
+  assert.match(css, /\.target-chip\.active\s*\{[\s\S]*?background:\s*#eef2f7/);
+  assert.match(appSource, /function renderPayerButtons\([\s\S]*?button\.style\.borderColor = colorOf\(name\);\s*button\.style\.color = colorOf\(name\)/);
+  assert.match(exceptionSource, /if \(checked\) \{\s*button\.style\.borderColor = colorOf\(name\);\s*button\.style\.color = colorOf\(name\);/);
+  assert.match(css, /#payerButtons\s*\{[\s\S]*?gap:\s*7px/);
+  assert.match(css, /\.target-chip-wrap\s*\{[\s\S]*?gap:\s*7px/);
+  assert.match(css, /\.chip-wrap\s*\{[\s\S]*?gap:\s*5px/);
+  assert.match(css, /\.target-chip\.inactive\s*\{[\s\S]*?background:\s*#fff/);
+  assert.match(css, /\.target-chip\.locked\s*\{[\s\S]*?text-decoration:\s*line-through/);
+  assert.match(css, /\.exception-editor-heading\s*\{[\s\S]*?display:\s*flex/);
+});
+
+test("412px 모바일 폭에서 두 글자 이름 여섯 칩이 공통 스타일로 한 줄에 들어간다", () => {
+  const availableWidth = 412 - 54;
+  const twoCharacterChipWidth = (13 * 2) + (10 * 2) + (1 * 2);
+  const chipGap = 7;
+  const sixChipRowWidth = (twoCharacterChipWidth * 6) + (chipGap * 5);
+  assert.ok(sixChipRowWidth <= availableWidth, `${sixChipRowWidth}px > ${availableWidth}px`);
+  assert.match(css, /\.chip\s*\{[\s\S]*?padding:\s*0 10px/);
+  assert.match(css, /#payerButtons\s*\{[\s\S]*?gap:\s*7px/);
+  assert.match(css, /\.target-chip-wrap\s*\{[\s\S]*?gap:\s*7px/);
+  assert.match(css, /\.chip\s*\{[\s\S]*?min-height:\s*32px/);
+  assert.match(css, /\.target-chip-wrap\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+});
+
+test("상단 요약, 대상자 개별 선택, 결과 버튼은 합의한 표시만 제공한다", () => {
+  const summaryMarkup = html.slice(html.indexOf('<section class="summary-panel"'), html.indexOf('<nav class="tab-bar"'));
+  const resultMarkup = html.slice(html.indexOf('id="tabResult"'));
+  assert.match(summaryMarkup, /총 결제액/);
+  assert.match(summaryMarkup, /결제 내역/);
+  assert.doesNotMatch(summaryMarkup, /1인당|정산<|인원 변경|summaryTargetCount/);
+  assert.doesNotMatch(resultMarkup, /targetAllToggleBtn|모두 포함|모두 제외/);
+  assert.doesNotMatch(appSource, /targetAllToggleBtn/);
+  assert.match(resultMarkup, /id="copyResultBtn"[^>]*>결과 복사<\/button>/);
+  assert.match(resultMarkup, /id="createPngBtn"[^>]*>이미지 공유<\/button>/);
+  assert.match(appSource, /button\.textContent = "이미지 공유"/);
+  assert.doesNotMatch(resultMarkup, /결과 복사하기|PNG 공유 이미지 만들기/);
 });

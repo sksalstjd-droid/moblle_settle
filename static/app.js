@@ -149,6 +149,10 @@ function clearQuickInputError(input) {
   $("quickInputFeedback").textContent = "";
 }
 
+function clearQuickInputErrors() {
+  document.querySelectorAll(".quick-input-fields input").forEach(clearQuickInputError);
+}
+
 function showQuickInputError(input, message) {
   document.querySelectorAll(".quick-input-fields input.input-error").forEach((field) => {
     field.classList.remove("input-error");
@@ -243,7 +247,7 @@ async function prepareShareImage() {
 
   const button = $("createPngBtn");
   button.disabled = true;
-  button.textContent = "PNG 만드는 중…";
+  button.textContent = "이미지 생성 중…";
   $("sharePanel").hidden = false;
   $("shareStatus").textContent = "공유 이미지를 만들고 있어요.";
 
@@ -277,7 +281,7 @@ async function prepareShareImage() {
     showToast("PNG 생성에 실패했어요.");
   } finally {
     button.disabled = false;
-    button.textContent = "PNG 공유 이미지 만들기";
+    button.textContent = "이미지 공유";
   }
 }
 
@@ -329,28 +333,8 @@ function setTab(tabName) {
 }
 
 function renderSummary(calculation) {
-  const { total, perHead } = calculation;
-  const targets = getTargets();
-  const customCount = state.payments.filter((payment) => payment.participantMode === "custom").length;
-
-  if (customCount === 0) {
-    $("summaryPrimaryLabel").textContent = "1인당";
-    $("summaryPerHead").textContent = won(perHead);
-    $("summarySecondaryLabel").textContent = "총액";
-    $("summaryTotal").textContent = won(total);
-    $("summaryTargetCount").textContent = `${targets.length}명 · ${state.payments.length}건`;
-    return;
-  }
-
-  $("summaryPrimaryLabel").textContent = "총 결제액";
-  $("summaryPerHead").textContent = won(total);
-  $("summarySecondaryLabel").textContent = "정산";
-  $("summaryTotal").textContent = "";
-  $("summaryTargetCount").textContent = `${state.payments.length}건 · 예외 ${customCount}건`;
-}
-
-function renderStartOverCard() {
-  $("startOverSummary").textContent = `멤버 ${state.names.length}명 · 결제 ${state.payments.length}건`;
+  $("summaryTotalAmount").textContent = won(calculation.total);
+  $("summaryPaymentCount").textContent = `${state.payments.length}건`;
 }
 
 function renderPayerButtons() {
@@ -370,8 +354,10 @@ function renderPayerButtons() {
     button.className = "chip";
     button.textContent = name;
     button.style.borderColor = colorOf(name);
+    button.style.color = colorOf(name);
     button.addEventListener("click", () => {
       quickSavedPayer = null;
+      clearQuickInputErrors();
       $("payerInput").value = name;
       $("amountInput").focus();
       updateSaveButtonText();
@@ -698,12 +684,13 @@ function renderTargets() {
   const targets = getTargets();
   const totalCount = state.names.length;
   const targetCount = targets.length;
-  const allSelected = totalCount > 0 && targetCount === totalCount;
-  const allToggleButton = $("targetAllToggleBtn");
-
-  $("targetCountBadge").textContent = `${targetCount}/${totalCount}명`;
-  allToggleButton.textContent = allSelected ? "모두 제외" : "모두 포함";
-  allToggleButton.disabled = totalCount === 0;
+  const targetCountBadge = $("targetCountBadge");
+  targetCountBadge.replaceChildren();
+  const selectedCount = document.createElement("span");
+  selectedCount.textContent = `${targetCount}명 선택`;
+  const memberCount = document.createElement("span");
+  memberCount.textContent = `전체 ${totalCount}명`;
+  targetCountBadge.append(selectedCount, memberCount);
   list.innerHTML = "";
 
   if (!state.names.length) {
@@ -715,10 +702,12 @@ function renderTargets() {
     const checked = state.targets[name] !== false;
     const button = document.createElement("button");
 
-    button.className = `target-chip ${checked ? "active" : "inactive"}`;
+    button.className = `chip target-chip ${checked ? "active" : "inactive"}`;
     button.textContent = name;
+    button.setAttribute("aria-pressed", String(checked));
     if (checked) {
       button.style.borderColor = colorOf(name);
+      button.style.color = colorOf(name);
     }
 
     button.addEventListener("click", () => {
@@ -745,7 +734,7 @@ function applyGlobalTargets(targetNames) {
       const payment = result.blockingPayments[0];
       const label = payment ? (payment.place || payment.payer) : "결제";
       const excludedName = getTargets().find((name) => !targetNames.includes(name));
-      showToast("'" + (excludedName || "선택한 멤버") + "' 제외 시 '" + label + "' 결제의 부담자가 0명이 됩니다.");
+      showToast("'" + (excludedName || "선택한 멤버") + "' 제외 시 '" + label + "' 결제의 정산 인원이 0명이 됩니다.");
       markBlockedException(payment && payment.id);
     }
     renderTargets();
@@ -767,34 +756,37 @@ function markBlockedException(paymentId) {
 function togglePaymentParticipant(payment, name, button) {
   if (state.targets[name] === false) return;
   const current = payment.participantMode === "custom"
-    ? payment.participants.filter((member) => state.targets[member] !== false)
+    ? payment.participants.slice()
     : getTargets();
   const selected = new Set(current);
   if (selected.has(name)) selected.delete(name);
   else selected.add(name);
-  if (selected.size === 0) {
+  const activeSelectedCount = state.names.filter((member) => (
+    state.targets[member] !== false && selected.has(member)
+  )).length;
+  if (activeSelectedCount === 0) {
     button.classList.add("blocked");
     button.setAttribute("aria-invalid", "true");
     window.setTimeout(() => {
       button.classList.remove("blocked");
       button.removeAttribute("aria-invalid");
     }, 800);
-    showToast("부담자는 한 명 이상 선택해야 해요.");
+    showToast("정산 인원은 한 명 이상 선택해야 해요.");
     return;
   }
   const result = setCustomParticipants(state, payment.id, state.names.filter((member) => selected.has(member)));
   if (!result.ok) {
-    showToast("부담자 설정을 저장하지 못했어요.");
+    showToast("정산 인원 설정을 저장하지 못했어요.");
     return;
   }
   commitState(result.state);
 }
 
-function renderExceptions() {
+function renderExceptions(calculation = calcResult()) {
   const list = $("exceptionPaymentList");
   const editor = $("exceptionEditor");
   const customCount = state.payments.filter((payment) => payment.participantMode === "custom").length;
-  $("customPaymentCountBadge").textContent = `예외 ${customCount}건`;
+  $("customPaymentCountBadge").textContent = `${customCount}건`;
   list.innerHTML = "";
   editor.innerHTML = "";
 
@@ -813,12 +805,28 @@ function renderExceptions() {
     button.className = `exception-payment-btn ${payment.id === exceptionEditingPaymentId ? "selected" : ""}`;
     button.dataset.paymentId = payment.id;
     const label = document.createElement("span");
-    label.textContent = payment.place ? `${payment.payer} · ${payment.place}` : payment.payer;
+    label.className = "exception-payment-label";
+    const payer = document.createElement("span");
+    payer.className = "exception-payment-payer";
+    payer.textContent = payment.payer;
+    label.appendChild(payer);
+    if (payment.place) {
+      const place = document.createElement("span");
+      place.className = "exception-payment-place";
+      place.textContent = payment.place;
+      label.appendChild(place);
+    }
     if (payment.participantMode === "custom") {
-      const badge = document.createElement("span");
-      badge.className = "custom-badge";
-      badge.textContent = "예외";
-      label.append(" ", badge);
+      const paymentDetail = calculation.paymentDetails.find((detail) => (
+        detail.type === "custom-payment" && detail.paymentId === payment.id
+      ));
+      const participantCount = paymentDetail?.participants.length;
+      if (Number.isInteger(participantCount) && participantCount > 0) {
+        const badge = document.createElement("span");
+        badge.className = "participant-count-badge";
+        badge.textContent = `${participantCount}명`;
+        label.append(" ", badge);
+      }
     }
     const amount = document.createElement("span");
     amount.textContent = won(payment.amount);
@@ -831,9 +839,15 @@ function renderExceptions() {
 
   const card = document.createElement("div");
   card.className = "exception-editor-card";
-  const title = document.createElement("p");
-  title.className = "exception-editor-title";
-  title.textContent = `${selectedPayment.place || selectedPayment.payer} 부담자 선택`;
+  const title = document.createElement("div");
+  title.className = "exception-editor-heading";
+  const paymentTitle = document.createElement("p");
+  paymentTitle.className = "exception-editor-title";
+  paymentTitle.textContent = selectedPayment.place || selectedPayment.payer;
+  const subtitle = document.createElement("p");
+  subtitle.className = "exception-editor-subtitle";
+  subtitle.textContent = "정산 인원 선택";
+  title.append(paymentTitle, subtitle);
   const chips = document.createElement("div");
   chips.className = "target-chip-wrap";
 
@@ -844,21 +858,20 @@ function renderExceptions() {
       : !locked;
     const checked = selected && !locked;
     const button = document.createElement("button");
-    button.className = `target-chip ${locked ? "locked" : checked ? "active" : "inactive"}`;
-    button.textContent = locked ? `${name} · 전체 정산 제외 🔒` : name;
+    button.className = `chip target-chip ${locked ? "locked" : checked ? "active" : "inactive"}`;
+    button.textContent = name;
     button.disabled = locked;
     button.setAttribute("aria-pressed", String(checked));
-    if (locked) button.title = "전역 정산에서 제외되어 이 결제에서도 선택할 수 없어요.";
-    if (checked) button.style.borderColor = colorOf(name);
+    if (checked) {
+      button.style.borderColor = colorOf(name);
+      button.style.color = colorOf(name);
+    }
     button.addEventListener("click", () => {
       togglePaymentParticipant(selectedPayment, name, button);
     });
     chips.appendChild(button);
   });
-  const hint = document.createElement("p");
-  hint.className = "exception-editor-hint";
-  hint.textContent = "부담자 선택은 즉시 저장돼요. 전역 대상자와 같아지면 기본 정산으로 돌아가요.";
-  card.append(title, chips, hint);
+  card.append(title, chips);
   editor.appendChild(card);
 }
 
@@ -872,7 +885,7 @@ function renderResult(calculation) {
     const message = errors.some((error) => error.code === "empty-default-participants")
       ? "기본 정산 대상자를 한 명 이상 포함해주세요."
       : errors.some((error) => error.code === "empty-custom-participants")
-        ? "예외 결제의 부담자를 전역 정산 대상자 중에서 한 명 이상 선택해주세요."
+        ? "선택한 결제의 정산 인원을 전역 정산 대상자 중에서 한 명 이상 선택해주세요."
         : "결제 내역과 정산 대상자를 확인해주세요.";
     list.innerHTML = `<div class="notice">${message}</div>`;
     $("copyResultBtn").style.display = "none";
@@ -908,13 +921,12 @@ function renderResult(calculation) {
 function render() {
   normalizeState();
   const calculation = calcResult();
-  renderStartOverCard();
   renderSummary(calculation);
   renderPayerButtons();
   renderMembers();
   renderPayments();
   renderTargets();
-  renderExceptions();
+  renderExceptions(calculation);
   renderResult(calculation);
   updateSaveButtonText();
 }
@@ -1055,7 +1067,6 @@ function updateSaveButtonText() {
   if (!amountRaw && !place && name && state.names.includes(name) && name !== quickSavedPayer) {
     button.textContent = "이미 등록됨";
     button.disabled = true;
-    showQuickInputNotice("이미 등록된 멤버예요. 결제를 추가하려면 금액을 입력하세요.");
     return;
   }
 
@@ -1128,13 +1139,6 @@ function bindEvents() {
 
   $("savePaymentBtn").addEventListener("click", addPayment);
   $("clearPaymentsBtn").addEventListener("click", clearPaymentsOnly);
-
-  $("targetAllToggleBtn").addEventListener("click", () => {
-    const targets = getTargets();
-    const allSelected = state.names.length > 0 && targets.length === state.names.length;
-
-    applyGlobalTargets(allSelected ? [] : state.names.slice());
-  });
 
   $("copyResultBtn").addEventListener("click", async () => {
     const text = buildCopyText();
