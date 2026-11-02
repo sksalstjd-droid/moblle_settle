@@ -251,7 +251,7 @@ function fakeCanvasFactory(options = {}) {
       textAlign: "left",
       textBaseline: "top",
       measureText: (value) => ({ width: String(value).length * 14 }),
-      scale() {}, fillRect() {}, strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fillText() {},
+      quadraticCurveTo() {}, scale() {}, fillRect() {}, strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fillText() {},
     };
     return {
       width: 0,
@@ -329,17 +329,22 @@ test("송금이 없으면 정산할 내역 없음으로 표시한다", () => {
   assert.match(buildCopyText(state, calculation), /정산할 내역 없음/);
 });
 
-test("PNG 레이아웃에 필수 정보와 올바른 차액 부호가 포함된다", () => {
+test("PNG 레이아웃은 송금 내역을 먼저 보여주고 결제별 실제 정산액을 표에 담는다", () => {
   const state = stateOf(["A", "B"], [{ payer: "A", amount: 10000, place: "긴 식당 이름" }]);
   const { model } = reportFor(state);
   const rendered = renderReportCanvas(model, { canvasFactory: fakeCanvasFactory() });
   const output = rendered.commands.filter((command) => command.type === "text").map((command) => command.value).join("\n");
+  const transfersHeading = output.indexOf("최종 송금");
+  const matrixHeading = output.indexOf("정산 상세");
+  assert.ok(transfersHeading >= 0 && transfersHeading < matrixHeading);
+  assert.match(output, /정산 결과/);
   assert.match(output, /총 결제액  10,000원/);
   assert.match(output, /긴 식당 이름/);
-  assert.match(output, /A 결제 · 10,000원/);
-  assert.ok(output.includes("+5,000원 받음"));
-  assert.ok(output.includes("-5,000원 보냄"));
-  assert.ok(output.includes("B → A"));
+  assert.doesNotMatch(output, /결제 A/);
+  assert.match(output, /정산액/);
+  assert.equal(model.payments[0].amountsByMember.A, 5000);
+  assert.equal(model.payments[0].amountsByMember.B, 5000);
+  assert.ok(output.includes("A") && output.includes("5,000원"));
   assert.ok(rendered.logicalHeight > 0);
   assert.ok(rendered.canvas.width > 0);
 });
@@ -435,11 +440,11 @@ test("6명·4건 실사용 예시의 화면·텍스트·PNG 원본 값이 일치
   assert.match(text, /\[현진\] → 준녕 56,417원/);
   const pngText = renderReportCanvas(model, { canvasFactory: fakeCanvasFactory() }).commands.map((command) => command.value || "").join(" ");
   assert.match(pngText, /344,200원/);
-  assert.ok(pngText.includes("현진 → 준녕"));
+  assert.ok(pngText.includes("준녕") && pngText.includes("56,417원"));
   assert.match(pngText, /56,417원/);
 });
 
-test("정산표 검증 예시의 부담 매트릭스, 차액, 송금이 정확하다", () => {
+test("정산표 검증 예시의 결제별 실제 금액과 송금이 정확하다", () => {
   const names = ["준녕", "민성", "현진", "광일", "지은", "현구"];
   const state = stateOf(names, [
     { payer: "준녕", amount: 50000, place: "가즈아", participantMode: "custom", participants: ["준녕", "현진", "광일"] },
@@ -463,16 +468,18 @@ test("정산표 검증 예시의 부담 매트릭스, 차액, 송금이 정확�
     measureText: (value) => ({ width: String(value).length * 12 }),
   });
   const output = layout.commands.filter((command) => command.type === "text").map((command) => command.value).join("\n");
-  assert.match(output, /비용 부담 및 최종 차액/);
-  assert.match(output, /최종 차액/);
-  assert.ok(output.includes("+50,833원"));
-  assert.ok(output.includes("-16,667원"));
-  assert.ok(output.includes("지은 → 민성"));
-  assert.equal(layout.commands.filter((command) => command.type === "rect" && command.fill === "#d1fae5").length, 10);
-  assert.equal(layout.commands.filter((command) => command.type === "rect" && command.fill === "#f1f5f9").length, 9);
+  assert.match(output, /정산 상세/);
+  assert.ok(output.includes("50,000원"));
+  assert.ok(output.includes("25,000원"));
+  assert.ok(output.includes("30,000원"));
+  assert.deepEqual(model.payments.map((payment) => names.reduce((sum, name) => sum + payment.amountsByMember[name], 0)), [50000, 25000, 30000]);
+  assert.deepEqual(names.map((name) => model.payments.reduce((sum, payment) => sum + payment.amountsByMember[name], 0)), names.map((name) => calculation.owed[name]));
+  assert.ok(output.includes("민성") && output.includes("14,167원"));
+  assert.ok(!output.includes("—"));
+  assert.equal(model.payments[0].amountsByMember["준녕"] + model.payments[0].amountsByMember["현진"] + model.payments[0].amountsByMember["광일"], 50000);
 });
 
-test("공통 부담자 구성은 매트릭스를 생략하고 압축 차액 목록을 사용한다", () => {
+test("공통 부담자 구성에서도 결제별 실제 정산 금액 매트릭스를 표시한다", () => {
   const state = stateOf(["A", "B"], [
     { payer: "A", amount: 1000, place: "식사" },
     { payer: "B", amount: 2000, place: "카페", participantMode: "custom", participants: ["B", "A"] },
@@ -483,8 +490,9 @@ test("공통 부담자 구성은 매트릭스를 생략하고 압축 차액 목�
   });
   const output = layout.commands.filter((command) => command.type === "text").map((command) => command.value).join("\n");
   assert.equal(model.uniformParticipants, true);
-  assert.match(output, /공통 부담자/);
-  assert.doesNotMatch(output, /비용 부담 및 최종 차액/);
+  assert.match(output, /정산 상세/);
+  assert.match(output, /식사/);
+  assert.match(output, /카페/);
 });
 
 test("매트릭스는 열을 6개씩 나누고 공백 사용처는 결제 번호를 사용한다", () => {
@@ -500,7 +508,178 @@ test("매트릭스는 열을 6개씩 나누고 공백 사용처는 결제 번호
   const output = layout.commands.filter((command) => command.type === "text").map((command) => command.value).join("\n");
   assert.equal(model.matrixPageCount, 3);
   assert.match(output, /결제 1/);
-  assert.match(output, /부담 매트릭스 1\/3/);
-  assert.match(output, /부담 매트릭스 3\/3/);
+  assert.match(output, /결제 1–6/);
+  assert.match(output, /결제 13–13/);
   assert.ok(layout.height > 1500);
+});
+
+test("기본 결제 합산의 나머지를 결제별로 배분해 행·열·전체 합계를 코어와 일치시킨다", () => {
+  const names = ["A", "B", "C"];
+  const state = stateOf(names, [
+    { payer: "A", amount: 5 },
+    { payer: "B", amount: 4 },
+    { payer: "C", amount: 2 },
+    { payer: "A", amount: 7, participantMode: "custom", participants: ["A", "C"] },
+  ], { C: false });
+  const calculation = calculateSettlement(state);
+  const model = buildShareModel(state, calculation);
+  assert.equal(model.ok, true);
+  assert.deepEqual(model.payments.map((payment) => names.reduce((sum, name) => sum + payment.amountsByMember[name], 0)), [5, 4, 2, 7]);
+  assert.deepEqual(names.map((name) => model.payments.reduce((sum, payment) => sum + payment.amountsByMember[name], 0)), names.map((name) => calculation.owed[name]));
+  assert.equal(model.payments.reduce((sum, payment) => sum + Object.values(payment.amountsByMember).reduce((a, b) => a + b, 0), 0), calculation.total);
+  assert.deepEqual(model.transfers, calculation.transfers);
+});
+
+test("전역 제외는 PNG 정산 금액에서만 빠지고 재포함 시 기존 custom 선택만 복원한다", () => {
+  const names = ["A", "B", "C"];
+  const payments = [{ payer: "A", amount: 100, place: "저녁", participantMode: "custom", participants: ["A", "B"] }];
+  const excludedState = stateOf(names, payments, { B: false });
+  const excludedCalculation = calculateSettlement(excludedState);
+  const excludedModel = buildShareModel(excludedState, excludedCalculation);
+  assert.deepEqual(excludedModel.payments[0].participants, ["A"]);
+  assert.deepEqual(excludedModel.payments[0].amountsByMember, { A: 100, B: 0, C: 0 });
+  const restoredState = stateOf(names, payments);
+  const restoredModel = buildShareModel(restoredState, calculateSettlement(restoredState));
+  assert.deepEqual(restoredModel.payments[0].participants, ["A", "B"]);
+  assert.deepEqual(restoredModel.payments[0].amountsByMember, { A: 50, B: 50, C: 0 });
+  assert.equal(restoredModel.payments[0].payer, "A");
+});
+
+test("정산 총액과 매트릭스가 불일치하면 PNG 모델 생성을 차단한다", () => {
+  const state = stateOf(["A", "B"], [{ payer: "A", amount: 1000 }]);
+  const calculation = calculateSettlement(state);
+  calculation.owed.A += 1;
+  const model = buildShareModel(state, calculation);
+  assert.equal(model.ok, false);
+  assert.equal(model.errors[0].code, "matrix-total-mismatch");
+});
+
+test("송금인은 여러 수취인을 한 그룹에 유지한다", () => {
+  const groups = require("../static/share-report.js").groupTransfers([
+    ["A", "B", 10], ["A", "C", 20], ["D", "B", 30],
+  ]);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0].items, [{receiver:"B",amount:10},{receiver:"C",amount:20}]);
+  assert.equal(groups[1].sender, "D");
+});
+
+test("미리보기는 저장·닫기와 캐시를 이용한 토글을 제공한다", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../templates/index.html"), "utf8");
+  const app = fs.readFileSync(path.join(__dirname, "../static/app.js"), "utf8");
+  assert.doesNotMatch(html, /id="copyPngBtn"/);
+  assert.match(html, /id="closeSharePanelBtn"[^>]*>닫기/);
+  assert.match(html, /id="downloadPngBtn"[^>]*>이미지 저장/);
+  assert.doesNotMatch(html, /id="sharePngBtn"/);
+  assert.match(app, /preparedShare\?\.fingerprint === shareFingerprint\(\)/);
+  assert.doesNotMatch(app, /copyPreparedImage/);
+  assert.match(app, /requestDownload\(document, preparedShare\.url, preparedShare\.fileName\)/);
+});
+
+test("매트릭스는 이름 근처 결제액과 참여 타일만 표시하고 중간 합계 열을 생략한다", () => {
+  const state = stateOf(["A", "B", "C"], [
+    {payer:"A", amount:100, participantMode:"custom", participants:["A","B"]}
+  ]);
+  const { model } = reportFor(state);
+  const rendered = renderReportCanvas(model, {canvasFactory:fakeCanvasFactory()});
+  const labels = rendered.commands.filter(c => c.type === "text").map(c => c.value).join("\n");
+  assert.match(labels, /결제 100원/);
+  assert.doesNotMatch(labels, /결제 없음/);
+  assert.doesNotMatch(labels, /분담 합계/);
+  assert.match(labels, /정산액/);
+  assert.equal(rendered.commands.filter(c => c.type === "route").length, 0);
+  assert.doesNotMatch(labels, /—/);
+});
+
+test("요약은 한 줄이며 차액과 머리글 순서가 정확하다", () => {
+  const state = stateOf(["A","B","C"], [{payer:"A",amount:900,place:"식사",participantMode:"custom",participants:["B","C"]}]);
+  const {model}=reportFor(state);
+  const output=renderReportCanvas(model,{canvasFactory:fakeCanvasFactory()});
+  const texts=output.commands.filter(c=>c.type==="text");
+  const summary=texts.slice(0,3);
+  assert.equal(new Set(summary.map(c=>c.y)).size,1);
+  assert.ok(summary[0].x<summary[1].x && summary[1].x<summary[2].x);
+  assert.ok(texts.find(c=>c.value==="최종 송금").y < texts.find(c=>c.value==="정산 상세").y);
+  const place=texts.find(c=>c.value==="식사");
+  const amount=texts.find(c=>c.value==="900원");
+  assert.ok(place.y<amount.y);
+  assert.ok(!texts.some(c=>c.value==="결제 A"));
+  assert.ok(texts.some(c=>c.value==="+900원"));
+  assert.equal(texts.filter(c=>c.value==="−450원").length,2);
+  assert.equal(output.commands.filter(c=>c.type==="route").length,0);
+});
+
+test("결제자가 미참여여도 색상은 유지하고 분담액과 대시는 표시하지 않는다", () => {
+  const state=stateOf(["A","B"],[{payer:"A",amount:101,participantMode:"custom",participants:["B"]}]);
+  const {model}=reportFor(state);
+  const rendered=renderReportCanvas(model,{canvasFactory:fakeCanvasFactory()});
+  const cell=rendered.commands.find(c=>c.type==="rect" && c.memberName==="A");
+  assert.equal(cell.payer,true);
+  assert.equal(cell.included,false);
+  assert.equal(cell.fill,"#376653");
+  const labels=rendered.commands.filter(c=>c.type==="text").map(c=>c.value);
+  assert.ok(labels.includes("정산 참여") && labels.includes("결제자") && labels.includes("정산액"));
+  assert.ok(!labels.includes("—") && !labels.includes("+ 받음  − 보냄"));
+  assert.equal(model.payments[0].amountsByMember.A,0);
+});
+
+test("내용이 적은 표의 정산액은 마지막 결제 열에 붙고 장식선이 없다", () => {
+  const {model}=reportFor(stateOf(["A","B"],[{payer:"A",amount:100,place:"카페"}]));
+  const rendered=renderReportCanvas(model,{canvasFactory:fakeCanvasFactory()});
+  assert.equal(rendered.commands.filter(c=>c.type==="line" && c.role!=="row-guide").length,0);
+  const cell=rendered.commands.find(c=>c.type==="rect" && c.paymentId);
+  const result=rendered.commands.find(c=>c.type==="text" && c.value==="정산액");
+  assert.ok(result.x > cell.x+cell.width);
+  assert.ok(result.x-(cell.x+cell.width)<100);
+  assert.ok(result.x<rendered.logicalWidth-150);
+  const value=rendered.commands.find(c=>c.type==="text" && c.value==="50원" && c.y>cell.y);
+  assert.equal(value.baseline,"alphabetic");
+});
+
+test("송금 그룹은 행당 최대 세 개이며 방향 표시와 행 가이드가 독립적으로 렌더링된다", () => {
+  const names=["A","B","C","D","E"];
+  const {model}=reportFor(stateOf(names,[{payer:"A",amount:500}]));
+  const {commands}=renderReportCanvas(model,{canvasFactory:fakeCanvasFactory()});
+  const heading=commands.find(c=>c.value==="정산 상세");
+  const senders=commands.filter(c=>c.type==="text" && ["B","C","D","E"].includes(c.value) && c.y<heading.y);
+  const counts=new Map();
+  senders.forEach(c=>counts.set(c.y,(counts.get(c.y)||0)+1));
+  assert.ok([...counts.values()].every(count=>count<=3));
+  const arrows=commands.filter(c=>c.type==="direction");
+  assert.equal(arrows.length,model.transfers.length);
+  assert.ok(arrows.every(c=>c.width===20));
+  assert.ok(!commands.some(c=>c.type==="text" && c.value.includes("→")));
+  const guides=commands.filter(c=>c.role==="row-guide");
+  assert.equal(guides.length,names.length);
+  assert.equal(new Set(guides.map(c=>c.x2-c.x1)).size,1);
+  assert.ok(guides.every((c,i)=>i===0 || c.y>guides[i-1].y));
+});
+
+
+test("확정 화살표와 수취인·금액은 광학 중심을 공유하고 실험 UI를 제거한다", () => {
+  const {model}=reportFor(stateOf(["A","B"],[{payer:"A",amount:100}]));
+  const output=renderReportCanvas(model,{canvasFactory:fakeCanvasFactory()});
+  const arrow=output.commands.find(c=>c.type==="direction");
+  const receiver=output.commands.find(c=>c.type==="text" && c.value==="A" && c.x>arrow.x && c.y<arrow.y+20);
+  const amount=output.commands.find(c=>c.type==="text" && c.value==="50원" && c.y<arrow.y+20);
+  assert.equal(receiver.baseline,"alphabetic");
+  assert.equal(amount.baseline,"alphabetic");
+  // Test context has no glyph metrics: fallback ink center is 0.3 * font size above baseline.
+  assert.ok(Math.abs(receiver.y-19*0.3-arrow.y)<0.001);
+  assert.ok(Math.abs(amount.y-20*0.3-arrow.y)<0.001);
+  for (const file of ["../static/app.js","../templates/index.html","../static/style.css"]) {
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname,file),"utf8"), /pngIconVariant|data-png-icon|png-icon-comparison/);
+  }
+  const app=fs.readFileSync(path.join(__dirname,"../static/app.js"),"utf8");
+  assert.match(app,/const fileName = shareFileName\(\);/);
+});
+
+test("요약 상단 42px와 송금 제목 상단 여백 24px를 유지한다", () => {
+  const {model}=reportFor(stateOf(["A","B"],[{payer:"A",amount:100}]));
+  const {commands}=renderReportCanvas(model,{canvasFactory:fakeCanvasFactory()});
+  const summary=commands.find(c=>c.value==="정산 결과");
+  const background=commands.find(c=>c.type==="rect" && c.fill==="#e0ebe5");
+  const title=commands.find(c=>c.value==="최종 송금");
+  assert.equal(summary.y,42);
+  assert.equal(background.y,88);
+  assert.equal(title.y-background.y,24);
 });

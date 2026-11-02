@@ -6,7 +6,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const LOGICAL_WIDTH = 900;
+  const LOGICAL_WIDTH = 1000;
   const MAX_PIXELS = 24000000;
   const MAX_MATRIX_COLUMNS = 6;
 
@@ -29,10 +29,31 @@
         .filter((detail) => detail.type === "custom-payment")
         .map((detail) => [detail.paymentId, detail]),
     );
+    let defaultOffset = 0;
     const payments = state.payments.map((payment, index) => {
       const participants = payment.participantMode === "custom"
         ? (customDetails.get(payment.id)?.participants || payment.participants || [])
         : (defaultDetail?.participants || []);
+      const amountsByMember = Object.fromEntries(state.names.map((name) => [name, 0]));
+      if (payment.participantMode === "custom") {
+        const detail = customDetails.get(payment.id);
+        if (!detail) return null;
+        const base = Math.floor(payment.amount / detail.participants.length);
+        let remainder = payment.amount % detail.participants.length;
+        detail.participants.forEach((name) => {
+          amountsByMember[name] = base + (remainder > 0 ? 1 : 0);
+          if (remainder > 0) remainder -= 1;
+        });
+      } else if (defaultDetail) {
+        const start = defaultOffset;
+        const end = start + payment.amount;
+        const countBefore = (position, memberIndex, size) => Math.floor((position + size - 1 - memberIndex) / size);
+        defaultDetail.participants.forEach((name, memberIndex) => {
+          amountsByMember[name] = countBefore(end, memberIndex, participants.length)
+            - countBefore(start, memberIndex, participants.length);
+        });
+        defaultOffset = end;
+      }
       return {
         id: payment.id,
         index,
@@ -41,8 +62,35 @@
         payer: payment.payer,
         amount: payment.amount,
         participants: participants.slice(),
+        amountsByMember,
       };
     });
+
+    if (payments.some((payment) => !payment)) {
+      return { ok: false, errors: [{ code: "missing-payment-detail" }] };
+    }
+    const rowTotals = Object.fromEntries(state.names.map((name) => [name, 0]));
+    const columnTotals = payments.map((payment) => {
+      let total = 0;
+      state.names.forEach((name) => {
+        const amount = payment.amountsByMember[name];
+        if (!Number.isSafeInteger(amount) || amount < 0) total = NaN;
+        else {
+          total += amount;
+          rowTotals[name] += amount;
+        }
+      });
+      return total;
+    });
+    const matrixValid = columnTotals.every((total, index) => total === state.payments[index].amount)
+      && state.names.every((name) => rowTotals[name] === (calculation.owed[name] || 0))
+      && columnTotals.reduce((sum, amount) => sum + amount, 0) === calculation.total;
+    const paidTotals = Object.fromEntries(state.names.map((name) => [name, 0]));
+    state.payments.forEach((payment) => { paidTotals[payment.payer] += payment.amount; });
+    const balancesValid = state.names.every((name) =>
+      paidTotals[name] === calculation.paid[name]
+      && calculation.balances[name] === calculation.owed[name] - calculation.paid[name]);
+    if (!matrixValid || !balancesValid) return { ok: false, errors: [{ code: "matrix-total-mismatch" }] };
 
     const firstParticipants = payments[0]?.participants || [];
     const uniformParticipants = payments.every((payment) => sameNames(payment.participants, firstParticipants));
@@ -70,9 +118,9 @@
       transfers: calculation.transfers.map((transfer) => transfer.slice()),
       uniformParticipants,
       commonParticipants: uniformParticipants ? firstParticipants.slice() : null,
-      matrixRequired: !uniformParticipants,
-      matrixColumnsPerPage: Math.min(Math.max(payments.length, 1), MAX_MATRIX_COLUMNS),
-      matrixPageCount: uniformParticipants ? 0 : Math.ceil(payments.length / MAX_MATRIX_COLUMNS),
+      matrixRequired: payments.length > 0,
+      matrixColumnsPerPage: MAX_MATRIX_COLUMNS,
+      matrixPageCount: Math.ceil(payments.length / MAX_MATRIX_COLUMNS),
       hasCustomPayments: state.payments.some((payment) => payment.participantMode === "custom"),
       perHead: calculation.perHead,
     };
@@ -164,162 +212,206 @@
   function createLayout(model, measureContext) {
     const commands = [];
     const left = 62;
-    const right = LOGICAL_WIDTH - 62;
+    const measured = (value, font) => { measureContext.font = font; return measureContext.measureText(value).width; };
+    const nameGap = 20, columnGap = 10, resultGap = 24;
+    const nameWidth = Math.max(70, ...model.members.map(member => Math.max(
+      Math.min(260, measured(member.name, "600 16px system-ui, sans-serif")),
+      member.paid ? measured(`결제 ${won(member.paid)}`, "500 13px system-ui, sans-serif") : 0
+    ))) + 12;
+    const netWidth = Math.max(measured("정산액", "600 16px system-ui, sans-serif"), ...model.members.map(member =>
+      measured(`${member.net > 0 ? "+" : member.net < 0 ? "−" : ""}${won(Math.abs(member.net))}`, "700 16px system-ui, sans-serif"))) + 16;
+    const paymentWidth = payment => Math.max(60,
+      Math.min(220, measured(payment.label, "700 17px system-ui, sans-serif")),
+      measured(won(payment.amount), "500 15px system-ui, sans-serif"),
+      ...model.names.map(name => measured(won(payment.amountsByMember[name]), "600 15px system-ui, sans-serif"))
+    ) + 16;
+    let canvasWidth = LOGICAL_WIDTH;
+    for (let start = 0; start < model.payments.length; start += MAX_MATRIX_COLUMNS) {
+      const batch = model.payments.slice(start, start + MAX_MATRIX_COLUMNS);
+      canvasWidth = Math.max(canvasWidth, left * 2 + nameWidth + nameGap
+        + batch.reduce((sum,payment) => sum + paymentWidth(payment), 0)
+        + Math.max(0,batch.length-1)*columnGap + resultGap + netWidth);
+    }
+    const right = canvasWidth - 62;
     const width = right - left;
-    let y = 62;
+    let y = 42;
 
     function text(value, x, options = {}) {
       const font = options.font || "500 25px system-ui, sans-serif";
-      const color = options.color || "#111827";
+      const color = options.color || "#293532";
       const lineHeight = options.lineHeight || 34;
       measureContext.font = font;
       const lines = options.wrap === false
         ? [ellipsize(measureContext, value, options.maxWidth || width)]
         : wrapText(measureContext, value, options.maxWidth || width);
-      lines.forEach((line, index) => {
-        commands.push({ type: "text", value: line, x, y: y + index * lineHeight, font, color, align: options.align || "left" });
-      });
+      lines.forEach((line, index) => commands.push({ type: "text", value: line, x, y: y + index * lineHeight, font, color, align: options.align || "left" }));
       y += lines.length * lineHeight;
     }
-
     function inlineText(value, x, atY, options = {}) {
-      const font = options.font || "500 25px system-ui, sans-serif";
-      const color = options.color || "#111827";
+      const font = options.font || "500 20px system-ui, sans-serif";
       measureContext.font = font;
-      commands.push({
-        type: "text",
-        value: ellipsize(measureContext, value, options.maxWidth || width),
-        x,
-        y: atY,
-        font,
-        color,
-        align: options.align || "left",
-      });
+      commands.push({ type: "text", value: ellipsize(measureContext, value, options.maxWidth || width), x, y: atY, font, color: options.color || "#293532", align: options.align || "left" });
     }
-
+    function centered(value, x, centerY, options) {
+      measureContext.font = options.font;
+      const m = measureContext.measureText(value);
+      const size = Number(options.font.match(/([0-9]+)px/)[1]);
+      const ascent = m.actualBoundingBoxAscent ?? size * 0.8;
+      const descent = m.actualBoundingBoxDescent ?? size * 0.2;
+      commands.push({type:"text", value, x, y:centerY+(ascent-descent)/2, font:options.font,
+        color:options.color || "#293532", align:options.align || "left", baseline:"alphabetic"});
+    }
     function gap(amount) { y += amount; }
-    function divider() {
-      commands.push({ type: "line", x1: left, x2: right, y, color: "#dfe4ea" });
-      y += 18;
-    }
-    function sectionTitle(value) {
-      text(value, left, { font: "700 24px system-ui, sans-serif", lineHeight: 30 });
-      gap(5);
-    }
+    function sectionTitle(value) { text(value, left, { font: "700 24px system-ui, sans-serif", lineHeight: 30 }); gap(5); }
 
-    text(`총 결제액  ${won(model.total)}`, left, { font: "800 34px system-ui, sans-serif", color: "#2563a6", lineHeight: 42 });
-    text(`멤버 ${model.memberCount}명 · 결제 ${model.paymentCount}건`, left, { font: "500 19px system-ui, sans-serif", color: "#6b7280", lineHeight: 25 });
-    gap(10);
-    divider();
-
-    sectionTitle("결제 내역");
-    model.payments.forEach((payment, index) => {
-      const rowY = y;
-      text(`${index + 1}. ${payment.label}`, left, { font: "600 21px system-ui, sans-serif", wrap: false, maxWidth: 440, lineHeight: 27 });
-      inlineText(`${payment.payer} 결제 · ${won(payment.amount)}`, right, rowY, { font: "500 20px system-ui, sans-serif", color: "#374151", maxWidth: 330, align: "right" });
-      y += 8;
+    let summaryX = left;
+    [
+      ["정산 결과", "700 23px system-ui, sans-serif", "#293532"],
+      [`총 결제액  ${won(model.total)}`, "600 23px system-ui, sans-serif", "#245345"],
+      [`결제 ${model.paymentCount}건`, "500 17px system-ui, sans-serif", "#75817c"],
+    ].forEach(([value, font, color]) => {
+      measureContext.font = font;
+      const itemWidth = measureContext.measureText(value).width;
+      if (summaryX + itemWidth > right) throw new Error("요약 금액이 이미지 폭을 초과합니다.");
+      inlineText(value, summaryX, y, { font, color, maxWidth: itemWidth + 1 });
+      summaryX += itemWidth + 24;
     });
-    divider();
+    y += 58;
 
-    sectionTitle(model.uniformParticipants ? "공통 부담자 및 개인별 차액" : "비용 부담 및 최종 차액");
-    text("✓ 비용 부담   — 비부담   ·   참석 여부가 아닌 비용 부담 기준", left, { font: "500 18px system-ui, sans-serif", color: "#6b7280", lineHeight: 24 });
-    gap(6);
-    if (model.uniformParticipants) {
-      text(`공통 부담자  ✓ ${model.commonParticipants.join(", ")}`, left, { font: "600 21px system-ui, sans-serif", color: "#047857", lineHeight: 28 });
-      model.members.forEach((member) => {
-        const statusText = member.status === "receive"
-          ? `+${won(member.net)} 받음`
-          : member.status === "send"
-            ? `-${won(Math.abs(member.net))} 보냄`
-            : "0원 완료";
-        const color = member.status === "receive" ? "#047857" : member.status === "send" ? "#c2410c" : "#6b7280";
-        const rowY = y;
-        text(member.name, left, { font: "600 20px system-ui, sans-serif", wrap: false, maxWidth: 380, lineHeight: 26 });
-        inlineText(statusText, right, rowY, { font: "600 20px system-ui, sans-serif", color, maxWidth: 400, align: "right" });
-        y += 3;
-      });
-    } else {
-      const pages = [];
-      for (let start = 0; start < model.payments.length; start += MAX_MATRIX_COLUMNS) {
-        pages.push(model.payments.slice(start, start + MAX_MATRIX_COLUMNS));
-      }
-      if (pages.length === 0) pages.push([]);
-      const nameWidth = 205;
-      const balanceWidth = 236;
-      const availableForColumns = width - nameWidth - balanceWidth;
-      pages.forEach((pagePayments, pageIndex) => {
-        if (pages.length > 1) {
-          text(`부담 매트릭스 ${pageIndex + 1}/${pages.length}`, left, { font: "600 18px system-ui, sans-serif", color: "#6b7280", lineHeight: 23 });
-        }
-        const colWidth = availableForColumns / Math.max(pagePayments.length, 1);
-        const headersY = y;
-        commands.push({ type: "rect", x: left, y: headersY - 3, width, height: 34, fill: "#f1f5f9" });
-        text("이름", left + 4, { font: "700 18px system-ui, sans-serif", wrap: false, maxWidth: nameWidth - 8, lineHeight: 26 });
-        pagePayments.forEach((payment, column) => {
-          const x = left + nameWidth + column * colWidth;
-          const center = x + colWidth / 2;
-          const header = documentLabel(payment, model);
-          inlineText(header, center, headersY, { font: "700 18px system-ui, sans-serif", maxWidth: colWidth - 8, align: "center" });
-        });
-        inlineText("최종 차액", right, headersY, { font: "700 18px system-ui, sans-serif", maxWidth: balanceWidth - 10, align: "right" });
-        y += 38;
-
-        model.members.forEach((member, rowIndex) => {
-          const rowY = y;
-          if (rowIndex % 2 === 1) commands.push({ type: "rect", x: left, y: rowY - 2, width, height: 34, fill: "#f8fafc" });
-          text(member.name, left + 4, { font: "600 19px system-ui, sans-serif", wrap: false, maxWidth: nameWidth - 8, lineHeight: 27 });
-          pagePayments.forEach((payment, column) => {
-            const bearsCost = payment.participants.includes(member.name);
-            const x = left + nameWidth + column * colWidth;
-            const cellWidth = Math.min(34, colWidth - 8);
-            const cellX = x + (colWidth - cellWidth) / 2;
-            commands.push({
-              type: "rect", x: cellX, y: rowY + 1, width: cellWidth, height: 27,
-              fill: bearsCost ? "#d1fae5" : "#f1f5f9",
-              stroke: bearsCost ? "#6ee7b7" : "#e2e8f0",
-            });
-            inlineText(bearsCost ? "✓" : "—", cellX + cellWidth / 2, rowY + 3, {
-              font: "700 18px system-ui, sans-serif",
-              color: bearsCost ? "#047857" : "#94a3b8",
-              maxWidth: cellWidth,
-              align: "center",
-            });
-          });
-          const balanceText = member.net > 0
-            ? `+${won(member.net)}`
-            : member.net < 0
-              ? `-${won(Math.abs(member.net))}`
-              : "0원";
-          const balanceColor = member.net > 0 ? "#047857" : member.net < 0 ? "#c2410c" : "#6b7280";
-          inlineText(balanceText, right, rowY + 1, {
-            font: "700 19px system-ui, sans-serif", color: balanceColor,
-            maxWidth: balanceWidth - 10, align: "right",
-          });
-          y += 34;
-        });
-        gap(5);
-      });
-    }
+    const transferBackdrop = { type: "rect", x: 0, y: y - 12, width: canvasWidth, height: 0, fill: "#e0ebe5" };
+    commands.push(transferBackdrop);
+    y += 12;
+    sectionTitle("최종 송금");
     gap(8);
-    divider();
-
-    sectionTitle("실제 송금");
-    if (model.transfers.length === 0) {
-      text("송금할 내역 없음", left, { font: "500 19px system-ui, sans-serif", color: "#047857", lineHeight: 26 });
+    if (!model.transfers.length) {
+      text("송금할 금액이 없습니다.", left, { font: "600 25px system-ui, sans-serif", color: "#65756d", lineHeight: 34 });
     } else {
-      model.transfers.forEach(([sender, receiver, amount]) => {
-        const rowY = y;
-        text(`${sender} → ${receiver}`, left, { font: "600 20px system-ui, sans-serif", wrap: false, maxWidth: 590, lineHeight: 26 });
-        inlineText(won(amount), right, rowY, { font: "700 20px system-ui, sans-serif", color: "#2563a6", maxWidth: 190, align: "right" });
-        y += 5;
+      const groupGapX = 90;
+      const groupGapY = 30;
+      let x = left;
+      let top = y;
+      let bottom = y;
+      let groupsInRow = 0;
+      const directionSpace = 26;
+      groupTransfers(model.transfers).forEach((group) => {
+        measureContext.font = "700 23px system-ui, sans-serif";
+        let groupWidth = measureContext.measureText(group.sender).width;
+        group.items.forEach(({receiver, amount}) => {
+          measureContext.font = "500 19px system-ui, sans-serif";
+          const receiverWidth = directionSpace + measureContext.measureText(receiver).width;
+          measureContext.font = "700 20px system-ui, sans-serif";
+          groupWidth = Math.max(groupWidth, receiverWidth + 12 + measureContext.measureText(won(amount)).width);
+        });
+        groupWidth = Math.min(width, groupWidth + 2);
+        if (groupsInRow === 3 || (x > left && x + groupWidth > right)) { x = left; top = bottom + groupGapY; groupsInRow = 0; }
+        y = top;
+        text(group.sender, x, {font:"700 23px system-ui, sans-serif", maxWidth:groupWidth, lineHeight:29});
+        group.items.forEach(({receiver, amount}) => {
+          measureContext.font = "700 20px system-ui, sans-serif";
+          const amountWidth = measureContext.measureText(won(amount)).width;
+          measureContext.font = "500 19px system-ui, sans-serif";
+          const lines = wrapText(measureContext, receiver, Math.max(30, groupWidth - directionSpace - amountWidth - 12));
+          // A shared optical center aligns the receiver ink and the arrow's horizontal exit.
+          const centerY = y + 12.5;
+          commands.push({ type: "direction", x, y: centerY, width: 20, color: "#6b8275" });
+          lines.forEach((line, i) => centered(line, x + directionSpace, centerY + i * 25, {font:"500 19px system-ui, sans-serif"}));
+          measureContext.font = "500 19px system-ui, sans-serif";
+          const lastWidth = measureContext.measureText(lines[lines.length-1]).width;
+          centered(won(amount), x + directionSpace + lastWidth + 12, centerY + (lines.length-1)*25, {font:"700 20px system-ui, sans-serif", color:"#245345", maxWidth:amountWidth+1});
+          y += lines.length * 25;
+        });
+        bottom = Math.max(bottom, y);
+        x += groupWidth + groupGapX;
+        groupsInRow += 1;
       });
+      y = bottom + 12;
     }
-    gap(12);
-    return { commands, height: Math.ceil(y + 42) };
-  }
+    transferBackdrop.height = y - transferBackdrop.y + 8;
+    gap(22);
+    sectionTitle("정산 상세");
+    gap(8);
+    const pages = [];
+    for (let start = 0; start < model.payments.length; start += MAX_MATRIX_COLUMNS) pages.push(model.payments.slice(start, start + MAX_MATRIX_COLUMNS));
+    if (!pages.length) pages.push([]);
+    pages.forEach((pagePayments, pageIndex) => {
+      if (pages.length > 1) text(`결제 ${pageIndex * MAX_MATRIX_COLUMNS + 1}–${pageIndex * MAX_MATRIX_COLUMNS + pagePayments.length}`, left, { font: "600 17px system-ui, sans-serif", color: "#6b7280", lineHeight: 22 });
+      const columnWidths = pagePayments.map(paymentWidth);
+      const columnLefts = columnWidths.map((_, index) => left + nameWidth + nameGap
+        + columnWidths.slice(0,index).reduce((a,b)=>a+b,0) + index * columnGap);
+      const netLeft = pagePayments.length
+        ? columnLefts[columnLefts.length-1] + columnWidths[columnWidths.length-1] + resultGap
+        : left + nameWidth + nameGap;
+      let colWidth = columnWidths[0] || 60;
+      const headerTop = y;
+      const headerLine = 20;
+      const maxCellText = Math.max(colWidth - 10, 20);
+      measureContext.font = "600 15px system-ui, sans-serif";
+      const headerData = pagePayments.map((payment, column) => [payment.label, won(payment.amount)].map((value, row) => {
+        measureContext.font = ["700 17px system-ui, sans-serif", "500 15px system-ui, sans-serif", "400 13px system-ui, sans-serif"][row];
+        return wrapText(measureContext, value, columnWidths[column] - 10);
+      }));
+      const rowHeights = [0, 1].map((row) => Math.max(1, ...headerData.map((cells) => cells[row].length)) * headerLine);
+      const headerHeight = rowHeights.reduce((sum, height) => sum + height, 0) + 8;
 
-  function documentLabel(payment, model) {
-    return `①②③④⑤⑥⑦⑧⑨⑩`[payment.index] || `${payment.index + 1}`;
+      const rowOffsets = [4, 4 + rowHeights[0], 4 + rowHeights[0] + rowHeights[1]];
+      inlineText("정산액", netLeft + netWidth / 2, headerTop + 4, { font: "600 16px system-ui, sans-serif", align: "center", maxWidth: netWidth - 8 });
+      pagePayments.forEach((payment, column) => {
+        colWidth = columnWidths[column];
+        const center = columnLefts[column] + colWidth / 2;
+        headerData[column].forEach((lines, row) => {
+          lines.forEach((line, lineIndex) => {
+            inlineText(line, center, headerTop + rowOffsets[row] + lineIndex * headerLine, { font: ["700 17px system-ui, sans-serif", "500 15px system-ui, sans-serif", "400 13px system-ui, sans-serif"][row], color: row === 2 ? "#75817c" : "#293532", maxWidth: colWidth - 10, align: "center" });
+          });
+        });
+      });
+      y += headerHeight;
+      model.members.forEach((member, rowIndex) => {
+        const rowY = y;
+        measureContext.font = "600 16px system-ui, sans-serif";
+        const nameLines = wrapText(measureContext, member.name, nameWidth - 12);
+        const cellValues = pagePayments.map((payment, column) => {
+          colWidth = columnWidths[column];
+          const included = payment.participants.includes(member.name);
+          const value = included ? won(payment.amountsByMember[member.name]) : "";
+          measureContext.font = included ? "600 15px system-ui, sans-serif" : "500 16px system-ui, sans-serif";
+          return { included, payer: payment.payer === member.name, lines: included ? wrapText(measureContext, value, colWidth - 8) : [] };
+        });
+        measureContext.font = "500 13px system-ui, sans-serif";
+        const paidLines = member.paid ? wrapText(measureContext, `결제 ${won(member.paid)}`, nameWidth - 12) : [];
+        measureContext.font = "700 16px system-ui, sans-serif";
+        const netLabel = `${member.net > 0 ? "+" : member.net < 0 ? "−" : ""}${won(Math.abs(member.net))}`;
+        const netLines = wrapText(measureContext, netLabel, netWidth - 12);
+        const rowHeight = Math.max(46, netLines.length * 20 + 12, nameLines.length * 17 + paidLines.length * 16 + 12, ...cellValues.map((cell) => cell.lines.length * 17 + 12));
+        commands.push({ type: "line", role: "row-guide", x1: left, x2: netLeft + netWidth, y: rowY + rowHeight, color: "#e4e9e6" });
+        nameLines.forEach((line, index) => centered(line, left + 6, rowY + rowHeight / 2 - (nameLines.length * 17 + paidLines.length * 16) / 2 + 8.5 + index * 17, { font: "600 16px system-ui, sans-serif", maxWidth: nameWidth - 12 }));
+        cellValues.forEach((cell, column) => {
+          colWidth = columnWidths[column];
+          if (cell.included || cell.payer) commands.push({
+            type: "rect", x: columnLefts[column] + 3, y: rowY + 7,
+            width: colWidth - 6, height: rowHeight - 14, fill: cell.payer ? "#376653" : "#e9eeeb",
+            paymentId: pagePayments[column].id, memberName: member.name, payer: cell.payer, included: cell.included,
+          });
+          cell.lines.forEach((line, lineIndex) => centered(line, columnLefts[column] + colWidth / 2, rowY + rowHeight / 2 + (lineIndex - (cell.lines.length-1)/2) * 17, {
+            font: cell.included ? "600 15px system-ui, sans-serif" : "500 16px system-ui, sans-serif",
+            color: cell.payer ? "#ffffff" : "#293532", maxWidth: colWidth - 8, align: "center",
+          }));
+        });
+        paidLines.forEach((value, index) => centered(value, left + 6, rowY + rowHeight / 2 - (nameLines.length * 17 + paidLines.length * 16)/2 + nameLines.length * 17 + 8 + index * 16, {
+          font: "500 13px system-ui, sans-serif", color: "#75817c", maxWidth: nameWidth - 12,
+        }));
+        netLines.forEach((line, index) => centered(line, netLeft + netWidth / 2, rowY + rowHeight / 2 + (index-(netLines.length-1)/2)*20, {
+          font: "700 16px system-ui, sans-serif", color: member.net > 0 ? "#245345" : "#293532", align: "center", maxWidth: netWidth - 12,
+        }));
+        y += rowHeight;
+      });
+      gap(7);
+    });
+    [["정산 참여", "#e9eeeb"], ["결제자", "#376653"]].forEach(([label, fill], index) => {
+      const x = left + index * 120;
+      commands.push({ type: "rect", x, y: y + 2, width: 12, height: 12, fill });
+      inlineText(label, x + 19, y, { font: "400 13px system-ui, sans-serif", color: "#75817c", maxWidth: 95 });
+    });
+    return { commands, width: Math.ceil(canvasWidth), height: Math.ceil(y + 36) };
   }
 
   function defaultCanvasFactory() {
@@ -334,19 +426,40 @@
     if (!measureContext) throw new Error("Canvas 2D를 사용할 수 없습니다.");
     const layout = createLayout(model, measureContext);
     const requestedScale = Math.min(Number(options.scale) || 2, 2);
-    const safeScale = Math.min(requestedScale, Math.sqrt(MAX_PIXELS / (LOGICAL_WIDTH * layout.height)));
+    const safeScale = Math.min(requestedScale, Math.sqrt(MAX_PIXELS / (layout.width * layout.height)));
     const scale = safeScale;
     const canvas = canvasFactory();
-    canvas.width = Math.ceil(LOGICAL_WIDTH * scale);
+    canvas.width = Math.ceil(layout.width * scale);
     canvas.height = Math.ceil(layout.height * scale);
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas 2D를 사용할 수 없습니다.");
     ctx.scale(scale, scale);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, LOGICAL_WIDTH, layout.height);
+    ctx.fillStyle = "#f4f6f5";
+    ctx.fillRect(0, 0, layout.width, layout.height);
     ctx.textBaseline = "top";
 
     layout.commands.forEach((command) => {
+      if (command.type === "direction") {
+        ctx.strokeStyle = command.color;
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        // Anchor the outgoing horizontal stroke (viewBox y=15) to the text's optical center.
+        const px = value => command.x + value * command.width / 24;
+        const py = value => command.y + (value - 15) * command.width / 24;
+        ctx.beginPath();
+        ctx.moveTo(px(4), py(3));
+        ctx.lineTo(px(4), py(11));
+        ctx.quadraticCurveTo(px(4), py(15), px(8), py(15));
+        ctx.lineTo(px(20), py(15));
+        ctx.moveTo(px(15), py(10));
+        ctx.lineTo(px(20), py(15));
+        ctx.lineTo(px(15), py(20));
+        ctx.stroke();
+        ctx.lineCap = "butt";
+        ctx.lineJoin = "miter";
+        return;
+      }
       if (command.type === "line") {
         ctx.strokeStyle = command.color;
         ctx.lineWidth = 1;
@@ -366,12 +479,13 @@
         }
         return;
       }
+      ctx.textBaseline = command.baseline || "top";
       ctx.font = command.font;
       ctx.fillStyle = command.color;
       ctx.textAlign = command.align;
       ctx.fillText(command.value, command.x, command.y);
     });
-    return { canvas, logicalWidth: LOGICAL_WIDTH, logicalHeight: layout.height, scale, commands: layout.commands };
+    return { canvas, logicalWidth: layout.width, logicalHeight: layout.height, scale, commands: layout.commands };
   }
 
   function canvasToPngBlob(canvas) {

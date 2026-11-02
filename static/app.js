@@ -24,7 +24,6 @@ const {
   buildShareModel,
   buildCopyText: buildReportCopyText,
   createPngReport,
-  shareFile,
   requestDownload,
 } = ShareReport;
 
@@ -238,10 +237,13 @@ function shareFileName() {
 }
 
 async function prepareShareImage() {
+  if (!$("sharePanel").hidden) { $("sharePanel").hidden = true; return; }
+  if (preparedShare?.fingerprint === shareFingerprint()) { $("sharePanel").hidden = false; return; }
+  const fingerprint = shareFingerprint();
   const calculation = calcResult();
   const model = buildShareModel(state, calculation);
   if (!model.ok || !state.payments.length) {
-    showToast("정산 오류를 해결한 뒤 이미지를 만들어주세요.");
+    showToast(model.errors?.length ? "정산 결과를 확인한 뒤 이미지를 만들어주세요." : "결제 내역을 추가한 뒤 이미지를 만들어주세요.");
     return;
   }
 
@@ -249,11 +251,12 @@ async function prepareShareImage() {
   button.disabled = true;
   button.textContent = "이미지 생성 중…";
   $("sharePanel").hidden = false;
-  $("shareStatus").textContent = "공유 이미지를 만들고 있어요.";
+  $("shareStatus").textContent = "이미지를 생성하고 있어요.";
 
   try {
     if (document.fonts?.ready) await document.fonts.ready;
     const report = await createPngReport(model);
+    if (fingerprint !== shareFingerprint()) { invalidateShareImage(); return; }
     invalidateShareImage();
     const fileName = shareFileName();
     const file = new File([report.blob], fileName, { type: "image/png" });
@@ -262,18 +265,7 @@ async function prepareShareImage() {
     $("sharePreview").src = url;
     $("sharePanel").hidden = false;
 
-    let canShareFile = false;
-    try {
-      canShareFile = typeof navigator.canShare === "function"
-        && typeof navigator.share === "function"
-        && navigator.canShare({ files: [file] });
-    } catch {
-      canShareFile = false;
-    }
-    $("sharePngBtn").hidden = !canShareFile;
-    $("shareStatus").textContent = canShareFile
-      ? "이미지가 준비됐어요. 공유하거나 PNG로 저장할 수 있어요."
-      : "이 브라우저는 파일 공유를 지원하지 않아 PNG 저장을 제공합니다.";
+    $("shareStatus").textContent = "";
   } catch (error) {
     invalidateShareImage();
     $("sharePanel").hidden = false;
@@ -292,25 +284,11 @@ function hasFreshShareImage() {
   return false;
 }
 
-async function sharePreparedImage() {
-  if (!hasFreshShareImage()) return;
-  const result = await shareFile(navigator, preparedShare.file);
-  if (result.status === "shared") {
-    showToast("공유 메뉴로 이미지를 전달했어요.");
-  } else if (result.status === "canceled") {
-    showToast("공유를 취소했어요.");
-  } else if (result.status === "unsupported") {
-    showToast("파일 공유를 지원하지 않아 PNG 저장을 이용해주세요.");
-  } else {
-    showToast("이미지 공유에 실패했어요.");
-  }
-}
-
 function downloadPreparedImage() {
   if (!hasFreshShareImage()) return;
   const result = requestDownload(document, preparedShare.url, preparedShare.fileName);
   $("shareStatus").textContent = result.status === "requested"
-    ? "PNG 저장을 요청했어요. 저장되지 않으면 이미지를 길게 눌러주세요."
+    ? ""
     : "자동 저장을 완료하지 못했어요. 이미지를 길게 눌러 저장해주세요.";
 }
 
@@ -1162,7 +1140,6 @@ function bindEvents() {
   });
 
   $("createPngBtn").addEventListener("click", prepareShareImage);
-  $("sharePngBtn").addEventListener("click", sharePreparedImage);
   $("downloadPngBtn").addEventListener("click", downloadPreparedImage);
   $("closeSharePanelBtn").addEventListener("click", () => {
     $("sharePanel").hidden = true;

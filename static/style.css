@@ -404,24 +404,16 @@ button {
 
 .share-panel {
   margin-top: 10px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: #f8fafc;
+  padding: 8px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.share-panel-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 14px;
-}
+.share-status:empty { display: none; }
 
-.share-status,
-.share-save-hint {
-  margin: 7px 0;
+.share-status {
+  margin: 4px 0 8px;
   color: var(--muted);
   font-size: 12px;
 }
@@ -429,10 +421,10 @@ button {
 .share-panel img {
   display: block;
   width: 100%;
-  max-height: 540px;
+  max-height: 70vh;
   object-fit: contain;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 0;
+  border-radius: 8px;
   background: white;
 }
 
@@ -440,12 +432,14 @@ button {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin-top: 9px;
+  margin-top: 8px;
 }
 
-.share-actions .ghost-btn {
+.share-actions button {
   min-height: 46px;
 }
+
+
 
 .start-over-card {
   box-shadow: none;
