@@ -1,0 +1,8 @@
+{
+  "name": "mobile-settlement",
+  "compatibility_date": "2026-11-02",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "none"
+  }
+}

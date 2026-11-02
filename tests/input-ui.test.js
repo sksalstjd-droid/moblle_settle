@@ -4,9 +4,19 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..");
-const html = fs.readFileSync(path.join(root, "templates/index.html"), "utf8");
-const appSource = fs.readFileSync(path.join(root, "static/app.js"), "utf8");
-const css = fs.readFileSync(path.join(root, "static/style.css"), "utf8");
+function readSource(relativePath) {
+  return fs.readFileSync(path.join(root, relativePath), "utf8").replace(/\r\n?/g, "\n");
+}
+
+const html = readSource("templates/index.html");
+const appSource = readSource("static/app.js");
+const css = readSource("static/style.css");
+
+test("소스 읽기는 LF와 CRLF 줄바꿈을 같은 형식으로 정규화한다", () => {
+  const source = "function sample() {\n  return true;\n}\n";
+  assert.equal(source.replace(/\r\n?/g, "\n"), source);
+  assert.equal(source.replace(/\n/g, "\r\n").replace(/\r\n?/g, "\n"), source);
+});
 
 test("입력 탭에는 이름·금액·사용처와 통합 저장 버튼이 항상 표시된다", () => {
   for (const id of ["payerInput", "amountInput", "placeInput", "savePaymentBtn"]) {
