@@ -223,12 +223,12 @@
       ...model.names.map(name => measured(won(payment.amountsByMember[name]), "600 15px system-ui, sans-serif"))
     ) + 16;
     const summaryItems = [
-      ["정산 결과", "700 23px system-ui, sans-serif"],
-      [`총 결제액  ${won(model.total)}`, "600 23px system-ui, sans-serif"],
-      [`결제 ${model.paymentCount}건`, "500 17px system-ui, sans-serif"],
+      { value: "정산 결과", font: "700 23px system-ui, sans-serif", color: "#293532", gap: 24 },
+      { value: "총 결제액", font: "500 17px system-ui, sans-serif", color: "#75817c", gap: 11 },
+      { value: won(model.total), font: "600 20px system-ui, sans-serif", color: "#245345", gap: 24 },
+      { value: `결제 ${model.paymentCount}건`, font: "500 17px system-ui, sans-serif", color: "#75817c", gap: 0 },
     ];
-    const summaryWidth = summaryItems.reduce((sum, [value, font]) => sum + measured(value, font), 0)
-      + Math.max(0, summaryItems.length - 1) * 24;
+    const summaryWidth = summaryItems.reduce((sum, item) => sum + measured(item.value, item.font) + item.gap, 0);
     const matrixWidths = [];
     for (let start = 0; start < model.payments.length; start += matrixColumnsPerPage) {
       const batch = model.payments.slice(start, start + matrixColumnsPerPage);
@@ -255,7 +255,12 @@
     const canvasWidth = Math.max(LOGICAL_WIDTH, Math.ceil(left + contentWidth + left));
     const right = canvasWidth - 62;
     const width = right - left;
+    const summaryHeaderTop = 0;
+    const summaryHeight = 58;
+    const transferBackdropOverlap = 12;
     let y = 42;
+    const summaryHeaderBottom = y + summaryHeight - transferBackdropOverlap;
+    const summaryCenterY = (summaryHeaderTop + summaryHeaderBottom) / 2;
 
     function text(value, x, options = {}) {
       const font = options.font || "500 25px system-ui, sans-serif";
@@ -286,17 +291,15 @@
     function sectionTitle(value) { text(value, left, { font: "700 24px system-ui, sans-serif", lineHeight: 30 }); gap(5); }
 
     let summaryX = left;
-    summaryItems.map(([value, font], index) => [value, font, ["#293532", "#245345", "#75817c"][index]])
-      .forEach(([value, font, color]) => {
-      measureContext.font = font;
-      const itemWidth = measureContext.measureText(value).width;
+    summaryItems.forEach(({ value, font, color, gap: itemGap }) => {
+      const itemWidth = measured(value, font);
       if (summaryX + itemWidth > right) throw new Error("요약 금액이 이미지 폭을 초과합니다.");
-      inlineText(value, summaryX, y, { font, color, maxWidth: itemWidth + 1 });
-      summaryX += itemWidth + 24;
+      centered(value, summaryX, summaryCenterY, { font, color });
+      summaryX += itemWidth + itemGap;
     });
-    y += 58;
+    y += summaryHeight;
 
-    const transferBackdrop = { type: "rect", x: 0, y: y - 12, width: canvasWidth, height: 0, fill: "#e0ebe5" };
+    const transferBackdrop = { type: "rect", x: 0, y: y - transferBackdropOverlap, width: canvasWidth, height: 0, fill: "#e0ebe5" };
     commands.push(transferBackdrop);
     y += 12;
     sectionTitle("최종 송금");
@@ -453,7 +456,7 @@
       commands.push({ type: "rect", x, y: y + 2, width: 12, height: 12, fill });
       inlineText(label, x + 19, y, { font: "400 13px system-ui, sans-serif", color: "#75817c", maxWidth: 95 });
     });
-    const summaryRight = summaryX - 24;
+    const summaryRight = summaryX - summaryItems[summaryItems.length - 1].gap;
     const transferRight = Math.max(left, ...transferLayouts.map((group) => group.x + group.width));
     const matrixRight = left + Math.max(0, ...matrixWidths);
     const legendRight = left + legendWidth;
