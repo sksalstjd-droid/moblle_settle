@@ -201,6 +201,20 @@ test("결과 탭 상태 표현은 아이콘 없이 스타일과 이름만 사용
   assert.match(css, /\.exception-editor-heading\s*\{[\s\S]*?display:\s*flex/);
 });
 
+test("결제별 정산 인원 제목 행은 건수와 펼침 상태를 함께 보여주고 접근성 토글을 제공한다", () => {
+  const disclosure = html.match(/<details id="paymentExceptions"[\s\S]*?<\/details>/)?.[0] || "";
+  assert.match(disclosure, /<summary aria-controls="exceptionContent" aria-expanded="false">/);
+  assert.match(disclosure, /id="customPaymentCountBadge">0건/);
+  assert.match(disclosure, /id="paymentExceptionsToggleLabel"[^>]*>펼치기/);
+  assert.match(disclosure, /class="payment-exceptions-chevron" aria-hidden="true"/);
+  assert.match(disclosure, /id="exceptionContent"/);
+  assert.match(appSource, /paymentExceptions\.addEventListener\("toggle", updatePaymentExceptionsDisclosure\)/);
+  assert.match(appSource, /paymentExceptionsSummary\.setAttribute\("aria-expanded", String\(expanded\)\)/);
+  assert.match(appSource, /textContent = expanded \? "접기" : "펼치기"/);
+  assert.match(css, /\.payment-exceptions-state\s*\{[\s\S]*?white-space:\s*nowrap/);
+  assert.match(css, /\.payment-exceptions\[open\] \.payment-exceptions-chevron/);
+});
+
 test("412px 모바일 폭에서 두 글자 이름 여섯 칩이 공통 스타일로 한 줄에 들어간다", () => {
   const availableWidth = 412 - 54;
   const twoCharacterChipWidth = (13 * 2) + (10 * 2) + (1 * 2);

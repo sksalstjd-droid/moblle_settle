@@ -111,12 +111,18 @@
         <div id="targetList" class="target-chip-wrap"></div>
 
         <details id="paymentExceptions" class="payment-exceptions">
-          <summary>
-            <span>결제별 정산 인원</span>
-            <strong id="customPaymentCountBadge">0건</strong>
+          <summary aria-controls="exceptionContent" aria-expanded="false">
+            <span class="payment-exceptions-title">결제별 정산 인원</span>
+            <span class="payment-exceptions-state">
+              <strong id="customPaymentCountBadge">0건</strong>
+              <span id="paymentExceptionsToggleLabel" class="payment-exceptions-toggle-label">펼치기</span>
+              <span class="payment-exceptions-chevron" aria-hidden="true"></span>
+            </span>
           </summary>
-          <div id="exceptionPaymentList" class="exception-payment-list"></div>
-          <div id="exceptionEditor" class="exception-editor"></div>
+          <div id="exceptionContent" class="exception-content">
+            <div id="exceptionPaymentList" class="exception-payment-list"></div>
+            <div id="exceptionEditor" class="exception-editor"></div>
+          </div>
         </details>
       </section>
 

@@ -744,21 +744,65 @@ button {
 .payment-exceptions > summary {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  list-style: none;
   cursor: pointer;
   color: var(--text);
   font-size: 14px;
   font-weight: 700;
 }
 
-.payment-exceptions > summary span {
+.payment-exceptions > summary::-webkit-details-marker {
+  display: none;
+}
+
+.payment-exceptions > summary::marker {
+  content: "";
+}
+
+.payment-exceptions > summary .payment-exceptions-title {
   flex: 1;
 }
 
-.payment-exceptions > summary strong {
+.payment-exceptions-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
+}
+
+.payment-exceptions-state strong {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.payment-exceptions-toggle-label {
+  min-width: 3em;
+  text-align: right;
+}
+
+.payment-exceptions-chevron {
+  width: 8px;
+  height: 8px;
+  margin: -4px 2px 0 0;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 140ms ease;
+}
+
+.payment-exceptions[open] .payment-exceptions-chevron {
+  margin-top: 4px;
+  transform: rotate(225deg);
+}
+
+.exception-content {
+  display: contents;
 }
 
 .exception-payment-list {

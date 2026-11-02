@@ -1075,6 +1075,16 @@ function escapeHtml(value) {
 function bindEvents() {
   bindConfirmDialog();
 
+  const paymentExceptions = $("paymentExceptions");
+  const paymentExceptionsSummary = paymentExceptions.querySelector("summary");
+  const updatePaymentExceptionsDisclosure = () => {
+    const expanded = paymentExceptions.open;
+    paymentExceptionsSummary.setAttribute("aria-expanded", String(expanded));
+    $("paymentExceptionsToggleLabel").textContent = expanded ? "접기" : "펼치기";
+  };
+  paymentExceptions.addEventListener("toggle", updatePaymentExceptionsDisclosure);
+  updatePaymentExceptionsDisclosure();
+
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => setTab(btn.dataset.tab));
   });
