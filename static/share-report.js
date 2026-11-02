@@ -6,9 +6,8 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const LOGICAL_WIDTH = 1000;
+  const LOGICAL_WIDTH = 780;
   const MAX_PIXELS = 24000000;
-  const MAX_MATRIX_COLUMNS = 6;
 
   function won(amount) {
     return `${Math.trunc(amount).toLocaleString("ko-KR")}원`;
@@ -119,8 +118,8 @@
       uniformParticipants,
       commonParticipants: uniformParticipants ? firstParticipants.slice() : null,
       matrixRequired: payments.length > 0,
-      matrixColumnsPerPage: MAX_MATRIX_COLUMNS,
-      matrixPageCount: Math.ceil(payments.length / MAX_MATRIX_COLUMNS),
+      matrixColumnsPerPage: payments.length,
+      matrixPageCount: payments.length ? 1 : 0,
       hasCustomPayments: state.payments.some((payment) => payment.participantMode === "custom"),
       perHead: calculation.perHead,
     };
@@ -145,39 +144,32 @@
   function buildCopyText(state, calculation) {
     const model = buildShareModel(state, calculation);
     if (!model.ok) return "";
-    const targets = state.names.filter((name) => state.targets[name] !== false);
-    const excludedNames = state.names.filter((name) => state.targets[name] === false);
-    const lines = ["🧾 정산 결과", "", `총액: ${won(model.total)}`];
-
-    if (!model.hasCustomPayments) {
-      lines.push(`1인당: ${won(model.perHead)} (${targets.length}명 기준)`);
-      if (excludedNames.length > 0) lines.push(`정산 제외: ${excludedNames.join(", ")}`);
-    } else if (model.uniformParticipants) {
-      lines.push(`공통 부담자: ${model.commonParticipants.join(", ")}`);
-    } else {
-      lines.push("", "[결제별 비용 부담]");
-      model.payments.forEach((payment) => {
-        lines.push(
-          `${payment.label} · ${won(payment.amount)} · 결제 ${payment.payer}`,
-          `부담: ${payment.participants.join(", ")}`,
-        );
-      });
+    const participantOwed = (model.commonParticipants || []).map((name) =>
+      model.members.find((member) => member.name === name)?.owed);
+    const equalParticipantOwed = model.payments.length > 0
+      && model.uniformParticipants
+      && participantOwed.length > 0
+      && participantOwed.every((amount) => amount === participantOwed[0]);
+    const lines = ["🧾 정산 결과", `총 결제액 ${won(model.total)}`];
+    if (equalParticipantOwed) {
+      lines.push(`1인당 부담액 ${won(model.members.find((member) => member.name === model.commonParticipants[0]).owed)}`);
     }
 
     const grouped = groupTransfers(model.transfers);
+    lines.push("", "[최종 송금]", "");
     if (grouped.length === 0) {
-      lines.push("", "정산할 내역 없음");
+      lines.push("송금할 금액 없음");
       return lines.join("\n");
     }
 
-    lines.push("", "[보낼 돈]");
-    grouped.forEach((group) => {
+    grouped.forEach((group, index) => {
+      if (index > 0) lines.push("");
       if (group.items.length === 1) {
         const item = group.items[0];
-        lines.push("", `[${group.sender}] → ${item.receiver} ${won(item.amount)}`);
+        lines.push(`${group.sender} → ${item.receiver} ${won(item.amount)}`);
       } else {
-        lines.push("", `[${group.sender}] 총 ${won(group.total)}`);
-        group.items.forEach((item) => lines.push(`→ ${item.receiver} ${won(item.amount)}`));
+        lines.push(`${group.sender} (총 ${won(group.total)})`);
+        group.items.forEach((item) => lines.push(`  → ${item.receiver} ${won(item.amount)}`));
       }
     });
     return lines.join("\n");
@@ -209,9 +201,14 @@
     return `${result}…`;
   }
 
-  function createLayout(model, measureContext) {
+  function createLayout(model, measureContext, options = {}) {
     const commands = [];
     const left = 62;
+    // The override is only for comparing the previous split layout in tests; production defaults to one table.
+    const requestedColumns = Number(options.matrixColumnsPerPage);
+    const matrixColumnsPerPage = Number.isInteger(requestedColumns) && requestedColumns > 0
+      ? requestedColumns
+      : Math.max(1, model.payments.length);
     const measured = (value, font) => { measureContext.font = font; return measureContext.measureText(value).width; };
     const nameGap = 20, columnGap = 10, resultGap = 24;
     const nameWidth = Math.max(70, ...model.members.map(member => Math.max(
@@ -225,13 +222,37 @@
       measured(won(payment.amount), "500 15px system-ui, sans-serif"),
       ...model.names.map(name => measured(won(payment.amountsByMember[name]), "600 15px system-ui, sans-serif"))
     ) + 16;
-    let canvasWidth = LOGICAL_WIDTH;
-    for (let start = 0; start < model.payments.length; start += MAX_MATRIX_COLUMNS) {
-      const batch = model.payments.slice(start, start + MAX_MATRIX_COLUMNS);
-      canvasWidth = Math.max(canvasWidth, left * 2 + nameWidth + nameGap
+    const summaryItems = [
+      ["정산 결과", "700 23px system-ui, sans-serif"],
+      [`총 결제액  ${won(model.total)}`, "600 23px system-ui, sans-serif"],
+      [`결제 ${model.paymentCount}건`, "500 17px system-ui, sans-serif"],
+    ];
+    const summaryWidth = summaryItems.reduce((sum, [value, font]) => sum + measured(value, font), 0)
+      + Math.max(0, summaryItems.length - 1) * 24;
+    const matrixWidths = [];
+    for (let start = 0; start < model.payments.length; start += matrixColumnsPerPage) {
+      const batch = model.payments.slice(start, start + matrixColumnsPerPage);
+      matrixWidths.push(nameWidth + nameGap + netWidth + (batch.length ? resultGap : 0)
         + batch.reduce((sum,payment) => sum + paymentWidth(payment), 0)
-        + Math.max(0,batch.length-1)*columnGap + resultGap + netWidth);
+        + Math.max(0,batch.length-1)*columnGap);
     }
+    const legendWidth = Math.max(
+      19 + measured("정산 참여", "400 13px system-ui, sans-serif"),
+      139 + measured("결제자", "400 13px system-ui, sans-serif"),
+    );
+    const transferGroups = groupTransfers(model.transfers);
+    const directionSpace = 26;
+    const transferWidths = transferGroups.map((group) => {
+      let groupWidth = measured(group.sender, "700 23px system-ui, sans-serif");
+      group.items.forEach(({ receiver, amount }) => {
+        groupWidth = Math.max(groupWidth, directionSpace + measured(receiver, "500 19px system-ui, sans-serif")
+          + 12 + measured(won(amount), "700 20px system-ui, sans-serif"));
+      });
+      return Math.ceil(groupWidth + 2);
+    });
+    const transferWidth = Math.max(0, ...transferWidths);
+    const contentWidth = Math.max(summaryWidth, ...matrixWidths, legendWidth, transferWidth);
+    const canvasWidth = Math.max(LOGICAL_WIDTH, Math.ceil(left + contentWidth + left));
     const right = canvasWidth - 62;
     const width = right - left;
     let y = 42;
@@ -265,11 +286,8 @@
     function sectionTitle(value) { text(value, left, { font: "700 24px system-ui, sans-serif", lineHeight: 30 }); gap(5); }
 
     let summaryX = left;
-    [
-      ["정산 결과", "700 23px system-ui, sans-serif", "#293532"],
-      [`총 결제액  ${won(model.total)}`, "600 23px system-ui, sans-serif", "#245345"],
-      [`결제 ${model.paymentCount}건`, "500 17px system-ui, sans-serif", "#75817c"],
-    ].forEach(([value, font, color]) => {
+    summaryItems.map(([value, font], index) => [value, font, ["#293532", "#245345", "#75817c"][index]])
+      .forEach(([value, font, color]) => {
       measureContext.font = font;
       const itemWidth = measureContext.measureText(value).width;
       if (summaryX + itemWidth > right) throw new Error("요약 금액이 이미지 폭을 초과합니다.");
@@ -283,17 +301,17 @@
     y += 12;
     sectionTitle("최종 송금");
     gap(8);
+    const transferLayouts = [];
     if (!model.transfers.length) {
       text("송금할 금액이 없습니다.", left, { font: "600 25px system-ui, sans-serif", color: "#65756d", lineHeight: 34 });
     } else {
-      const groupGapX = 90;
+      const groupGapX = 80;
       const groupGapY = 30;
       let x = left;
       let top = y;
       let bottom = y;
-      let groupsInRow = 0;
-      const directionSpace = 26;
-      groupTransfers(model.transfers).forEach((group) => {
+      let transferRow = 0;
+      transferGroups.forEach((group, groupIndex) => {
         measureContext.font = "700 23px system-ui, sans-serif";
         let groupWidth = measureContext.measureText(group.sender).width;
         group.items.forEach(({receiver, amount}) => {
@@ -303,7 +321,12 @@
           groupWidth = Math.max(groupWidth, receiverWidth + 12 + measureContext.measureText(won(amount)).width);
         });
         groupWidth = Math.min(width, groupWidth + 2);
-        if (groupsInRow === 3 || (x > left && x + groupWidth > right)) { x = left; top = bottom + groupGapY; groupsInRow = 0; }
+        if (x > left && x + groupWidth > right) {
+          x = left;
+          top = bottom + groupGapY;
+          transferRow += 1;
+        }
+        const groupTop = top;
         y = top;
         text(group.sender, x, {font:"700 23px system-ui, sans-serif", maxWidth:groupWidth, lineHeight:29});
         group.items.forEach(({receiver, amount}) => {
@@ -321,8 +344,8 @@
           y += lines.length * 25;
         });
         bottom = Math.max(bottom, y);
+        transferLayouts.push({ sender: group.sender, x, y: groupTop, width: groupWidth, row: transferRow, index: groupIndex });
         x += groupWidth + groupGapX;
-        groupsInRow += 1;
       });
       y = bottom + 12;
     }
@@ -331,16 +354,20 @@
     sectionTitle("정산 상세");
     gap(8);
     const pages = [];
-    for (let start = 0; start < model.payments.length; start += MAX_MATRIX_COLUMNS) pages.push(model.payments.slice(start, start + MAX_MATRIX_COLUMNS));
+    for (let start = 0; start < model.payments.length; start += matrixColumnsPerPage) pages.push(model.payments.slice(start, start + matrixColumnsPerPage));
     if (!pages.length) pages.push([]);
+    const matrixPageLayouts = [];
     pages.forEach((pagePayments, pageIndex) => {
-      if (pages.length > 1) text(`결제 ${pageIndex * MAX_MATRIX_COLUMNS + 1}–${pageIndex * MAX_MATRIX_COLUMNS + pagePayments.length}`, left, { font: "600 17px system-ui, sans-serif", color: "#6b7280", lineHeight: 22 });
+      const pageStartY = y;
+      if (pages.length > 1) text(`결제 ${pageIndex * matrixColumnsPerPage + 1}–${pageIndex * matrixColumnsPerPage + pagePayments.length}`, left, { font: "600 17px system-ui, sans-serif", color: "#6b7280", lineHeight: 22 });
       const columnWidths = pagePayments.map(paymentWidth);
-      const columnLefts = columnWidths.map((_, index) => left + nameWidth + nameGap
+      const netLeft = left + nameWidth + nameGap;
+      const firstPaymentLeft = netLeft + netWidth + resultGap;
+      const columnLefts = columnWidths.map((_, index) => firstPaymentLeft
         + columnWidths.slice(0,index).reduce((a,b)=>a+b,0) + index * columnGap);
-      const netLeft = pagePayments.length
-        ? columnLefts[columnLefts.length-1] + columnWidths[columnWidths.length-1] + resultGap
-        : left + nameWidth + nameGap;
+      const matrixRight = pagePayments.length
+        ? columnLefts[columnLefts.length - 1] + columnWidths[columnWidths.length - 1]
+        : netLeft + netWidth;
       let colWidth = columnWidths[0] || 60;
       const headerTop = y;
       const headerLine = 20;
@@ -382,7 +409,7 @@
         const netLabel = `${member.net > 0 ? "+" : member.net < 0 ? "−" : ""}${won(Math.abs(member.net))}`;
         const netLines = wrapText(measureContext, netLabel, netWidth - 12);
         const rowHeight = Math.max(46, netLines.length * 20 + 12, nameLines.length * 17 + paidLines.length * 16 + 12, ...cellValues.map((cell) => cell.lines.length * 17 + 12));
-        commands.push({ type: "line", role: "row-guide", x1: left, x2: netLeft + netWidth, y: rowY + rowHeight, color: "#e4e9e6" });
+        commands.push({ type: "line", role: "row-guide", x1: left, x2: matrixRight, y: rowY + rowHeight, color: "#e4e9e6" });
         nameLines.forEach((line, index) => centered(line, left + 6, rowY + rowHeight / 2 - (nameLines.length * 17 + paidLines.length * 16) / 2 + 8.5 + index * 17, { font: "600 16px system-ui, sans-serif", maxWidth: nameWidth - 12 }));
         cellValues.forEach((cell, column) => {
           colWidth = columnWidths[column];
@@ -405,13 +432,53 @@
         y += rowHeight;
       });
       gap(7);
+      matrixPageLayouts.push({
+        pageIndex,
+        paymentCount: pagePayments.length,
+        width: matrixWidths[pageIndex] || nameWidth + nameGap + netWidth,
+        height: y - pageStartY,
+        nameLeft: left,
+        nameWidth,
+        nameRight: left + nameWidth,
+        netLeft,
+        netWidth,
+        resultGap: resultGap,
+        paymentColumnLefts: columnLefts.slice(),
+        maxPaymentColumnWidth: Math.max(0, ...columnWidths),
+        columnWidths: columnWidths.slice(),
+      });
     });
     [["정산 참여", "#e9eeeb"], ["결제자", "#376653"]].forEach(([label, fill], index) => {
       const x = left + index * 120;
       commands.push({ type: "rect", x, y: y + 2, width: 12, height: 12, fill });
       inlineText(label, x + 19, y, { font: "400 13px system-ui, sans-serif", color: "#75817c", maxWidth: 95 });
     });
-    return { commands, width: Math.ceil(canvasWidth), height: Math.ceil(y + 36) };
+    const summaryRight = summaryX - 24;
+    const transferRight = Math.max(left, ...transferLayouts.map((group) => group.x + group.width));
+    const matrixRight = left + Math.max(0, ...matrixWidths);
+    const legendRight = left + legendWidth;
+    const contentRight = Math.max(summaryRight, transferRight, matrixRight, legendRight);
+    return {
+      commands,
+      width: Math.ceil(canvasWidth),
+      height: Math.ceil(y + 36),
+      metrics: {
+        minimumWidth: LOGICAL_WIDTH,
+        matrixColumnsPerPage,
+        matrixPages: matrixPageLayouts,
+        summaryRight,
+        transferRight,
+        matrixRight,
+        legendRight,
+        contentRight,
+        leftMargin: left,
+        rightMargin: Math.ceil(canvasWidth) - contentRight,
+        transferGroups: transferLayouts,
+        widthDriver: summaryWidth >= Math.max(...matrixWidths, legendWidth, transferWidth) ? "summary"
+          : Math.max(...matrixWidths) >= Math.max(legendWidth, transferWidth) ? "matrix"
+            : transferWidth >= legendWidth ? "transfers" : "legend",
+      },
+    };
   }
 
   function defaultCanvasFactory() {
@@ -424,7 +491,7 @@
     const measureCanvas = canvasFactory();
     const measureContext = measureCanvas.getContext("2d");
     if (!measureContext) throw new Error("Canvas 2D를 사용할 수 없습니다.");
-    const layout = createLayout(model, measureContext);
+    const layout = createLayout(model, measureContext, options);
     const requestedScale = Math.min(Number(options.scale) || 2, 2);
     const safeScale = Math.min(requestedScale, Math.sqrt(MAX_PIXELS / (layout.width * layout.height)));
     const scale = safeScale;
@@ -485,7 +552,7 @@
       ctx.textAlign = command.align;
       ctx.fillText(command.value, command.x, command.y);
     });
-    return { canvas, logicalWidth: layout.width, logicalHeight: layout.height, scale, commands: layout.commands };
+    return { canvas, logicalWidth: layout.width, logicalHeight: layout.height, scale, commands: layout.commands, metrics: layout.metrics };
   }
 
   function canvasToPngBlob(canvas) {
@@ -540,7 +607,6 @@
   return {
     LOGICAL_WIDTH,
     MAX_PIXELS,
-    MAX_MATRIX_COLUMNS,
     won,
     buildShareModel,
     buildCopyText,

@@ -37,6 +37,10 @@ def create_app():
         return render_template("index.html")
 
     if dev_live_reload:
+        @app.get("/__dev/png-review")
+        def dev_png_review():
+            return render_template("png-review.html")
+
         @app.get("/__dev/revision")
         def dev_revision():
             root = Path(app.root_path)

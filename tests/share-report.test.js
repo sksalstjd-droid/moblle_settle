@@ -14,6 +14,7 @@ const {
   shareFile,
   requestDownload,
 } = require("../static/share-report.js");
+const { definitions: pngReviewDefinitions, createState: createPngReviewState } = require("../static/png-review.js");
 
 test("ShareReport는 브라우저 window 전역에도 노출되고 HTML에서 app.js보다 먼저 로드된다", () => {
   const browserWindow = {};
@@ -92,6 +93,58 @@ test("Render 환경에서는 개발 Live Reload 경로를 비활성화한다", (
   assert.equal(payload.template_reload, false);
   assert.doesNotMatch(payload.html, /static\/dev-live-reload\.js/);
   assert.equal(payload.revision_status, 404);
+});
+
+test("PNG 검수 페이지는 개발 환경에만 제공되고 실제 운영 스크립트를 호출한다", () => {
+  const devResult = spawnSync("python", ["-B", "-c", [
+    "import json",
+    "from app import app",
+    "response = app.test_client().get('/__dev/png-review')",
+    "print(json.dumps({'status': response.status_code, 'html': response.get_data(as_text=True)}))",
+  ].join("; ")], {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: { ...process.env, SETTLE_DEV: "1", RENDER: "" },
+  });
+  assert.equal(devResult.status, 0, devResult.stderr);
+  const devPage = JSON.parse(devResult.stdout);
+  assert.equal(devPage.status, 200);
+  assert.match(devPage.html, /static\/settlement-core\.js/);
+  assert.match(devPage.html, /static\/share-report\.js/);
+  assert.match(devPage.html, /static\/png-review\.js/);
+  assert.doesNotMatch(devPage.html, /localStorage/);
+
+  const productionResult = spawnSync("python", ["-B", "-c", [
+    "from app import app",
+    "print(app.test_client().get('/__dev/png-review').status_code)",
+  ].join("; ")], {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: { ...process.env, SETTLE_DEV: "1", RENDER: "true" },
+  });
+  assert.equal(productionResult.status, 0, productionResult.stderr);
+  assert.equal(productionResult.stdout.trim(), "404");
+});
+
+test("PNG 검수의 고정 4개 데이터는 실제 코어 계산과 공유 모델을 통과한다", () => {
+  assert.deepEqual(pngReviewDefinitions.map(({ names, payments }) => [names.length, payments.length]), [
+    [5, 4], [10, 7], [10, 10], [10, 12],
+  ]);
+  const allGroups = [];
+  for (const definition of pngReviewDefinitions) {
+    const state = createPngReviewState(definition);
+    const calculation = calculateSettlement(state);
+    const model = buildShareModel(state, calculation);
+    assert.deepEqual(calculation.errors, []);
+    assert.equal(model.ok, true);
+    assert.equal(model.payments.length, definition.payments.length);
+    assert.equal(model.matrixPageCount, 1);
+    assert.ok(new Set(state.payments.map(({ payer }) => payer)).size > 1);
+    assert.ok(state.payments.some(({ participantMode }) => participantMode === "custom"));
+    assert.ok(state.payments.some(({ participantMode }) => participantMode === "default"));
+    allGroups.push(...require("../static/share-report.js").groupTransfers(calculation.transfers));
+  }
+  assert.ok(allGroups.some((group) => group.items.length > 1), "적어도 하나의 고정 샘플에 복수 수취인 송금이 있어야 한다");
 });
 
 test("개발 서버는 Python 자동 재시작만 켜고 대화형 디버거를 끈다", () => {
@@ -243,6 +296,7 @@ function reportFor(state) {
 
 function fakeCanvasFactory(options = {}) {
   return () => {
+    const characterWidth = options.characterWidth ?? 14;
     const context = {
       font: "",
       fillStyle: "",
@@ -250,7 +304,7 @@ function fakeCanvasFactory(options = {}) {
       lineWidth: 1,
       textAlign: "left",
       textBaseline: "top",
-      measureText: (value) => ({ width: String(value).length * 14 }),
+      measureText: (value) => ({ width: String(value).length * characterWidth }),
       quadraticCurveTo() {}, scale() {}, fillRect() {}, strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fillText() {},
     };
     return {
@@ -262,34 +316,35 @@ function fakeCanvasFactory(options = {}) {
   };
 }
 
-test("일반 정산 텍스트 형식을 보존한다", () => {
+test("일반 정산 TXT는 총액·조건부 1인당 부담액과 간결한 송금만 표시한다", () => {
   const state = stateOf(["A", "B"], [{ payer: "A", amount: 10000 }]);
   const text = buildCopyText(state, calculateSettlement(state));
   assert.equal(text, [
     "🧾 정산 결과",
+    "총 결제액 10,000원",
+    "1인당 부담액 5,000원",
     "",
-    "총액: 10,000원",
-    "1인당: 5,000원 (2명 기준)",
+    "[최종 송금]",
     "",
-    "[보낼 돈]",
-    "",
-    "[B] → A 5,000원",
+    "B → A 5,000원",
   ].join("\n"));
 });
 
-test("예외 정산 텍스트는 공통 1인당을 표시하지 않고 사용처와 부담자를 구분한다", () => {
+test("예외 정산 TXT는 상세 결제 목록과 공통 1인당 없이 최종 송금만 표시한다", () => {
   const state = stateOf(["A", "B", "C"], [
     { payer: "A", amount: 9000, place: "식당" },
     { payer: "B", amount: 3000, participantMode: "custom", participants: ["A", "C"] },
   ]);
   const text = buildCopyText(state, calculateSettlement(state));
-  assert.equal(text.includes("1인당:"), false);
-  assert.match(text, /식당 · 9,000원 · 결제 A/);
-  assert.match(text, /결제 2 · 3,000원 · 결제 B/);
-  assert.match(text, /부담: A, C/);
+  assert.equal(text.includes("1인당 부담액"), false);
+  assert.equal(text.includes("식당"), false);
+  assert.equal(text.includes("결제 2건"), false);
+  assert.equal(text.includes("부담:"), false);
+  assert.match(text, /\[최종 송금\]/);
+  assert.match(text, /C → A 4,500원/);
 });
 
-test("custom 설정이어도 실제 부담자 구성이 같으면 공통 부담자로 요약한다", () => {
+test("custom 설정이어도 부담자 집합과 실제 부담액이 같으면 1인당 부담액을 표시한다", () => {
   const state = stateOf(["A", "B", "C"], [
     { payer: "A", amount: 6000 },
     { payer: "B", amount: 3000, participantMode: "custom", participants: ["A", "B", "C"] },
@@ -298,8 +353,38 @@ test("custom 설정이어도 실제 부담자 구성이 같으면 공통 부담�
   assert.equal(model.uniformParticipants, true);
   assert.deepEqual(model.commonParticipants, ["A", "B", "C"]);
   const text = buildCopyText(state, calculateSettlement(state));
-  assert.match(text, /공통 부담자: A, B, C/);
-  assert.equal(text.includes("1인당:"), false);
+  assert.match(text, /1인당 부담액 3,000원/);
+  assert.doesNotMatch(text, /공통 부담자/);
+});
+
+test("1원 차이가 있으면 부담자 집합이 같아도 1인당 부담액을 숨긴다", () => {
+  const state = stateOf(["A", "B"], [
+    { payer: "A", amount: 10001, participantMode: "custom", participants: ["A", "B"] },
+  ]);
+  const text = buildCopyText(state, calculateSettlement(state));
+  assert.equal(text.includes("1인당 부담액"), false);
+});
+
+test("TXT는 한 송금인의 복수 수취인을 묶고 내부에는 빈 줄을 넣지 않는다", () => {
+  const state = stateOf(["A", "B", "C", "D"], [
+    { payer: "B", amount: 160 },
+    { payer: "C", amount: 140 },
+    { payer: "D", amount: 100 },
+  ]);
+  const text = buildCopyText(state, calculateSettlement(state));
+  assert.match(text, /A \(총 100원\)\n  → B 60원\n  → C 40원/);
+  assert.equal(text.includes("\n\n  →"), false);
+});
+
+test("TXT는 송금인 중심 순서를 유지하고 송금인 그룹 사이에 빈 줄 하나를 둔다", () => {
+  const state = stateOf(["A", "B", "C", "D"], [
+    { payer: "A", amount: 180 },
+    { payer: "B", amount: 140 },
+    { payer: "C", amount: 30 },
+    { payer: "D", amount: 50 },
+  ]);
+  const text = buildCopyText(state, calculateSettlement(state));
+  assert.match(text, /C → A 70원\n\nD \(총 50원\)\n  → A 10원\n  → B 40원/);
 });
 
 test("일부 결제의 실제 부담자가 다르면 결제별 관계를 만든다", () => {
@@ -322,11 +407,15 @@ test("결제자가 부담자가 아닌 결제를 정확히 표현한다", () => 
   assert.equal(model.members.find((member) => member.name === "A").status, "receive");
 });
 
-test("송금이 없으면 정산할 내역 없음으로 표시한다", () => {
+test("송금이 없으면 짧은 안내를 표시하고 결제 없는 상태에 1인당 금액을 만들지 않는다", () => {
   const state = stateOf(["A"], [{ payer: "A", amount: 1000 }]);
   const { calculation, model } = reportFor(state);
   assert.deepEqual(model.transfers, []);
-  assert.match(buildCopyText(state, calculation), /정산할 내역 없음/);
+  assert.match(buildCopyText(state, calculation), /\[최종 송금\]\n\n송금할 금액 없음/);
+  const empty = stateOf(["A", "B"], []);
+  const emptyText = buildCopyText(empty, calculateSettlement(empty));
+  assert.match(emptyText, /총 결제액 0원/);
+  assert.doesNotMatch(emptyText, /1인당 부담액/);
 });
 
 test("PNG 레이아웃은 송금 내역을 먼저 보여주고 결제별 실제 정산액을 표에 담는다", () => {
@@ -360,7 +449,12 @@ test("긴 이름·긴 사용처·많은 결제도 동적 높이로 렌더링한�
   }));
   const { model } = reportFor(stateOf(names, payments));
   const rendered = renderReportCanvas(model, { canvasFactory: fakeCanvasFactory() });
-  assert.ok(rendered.logicalHeight > 2000);
+  assert.equal(rendered.metrics.matrixPages.length, 1);
+  assert.equal(rendered.metrics.matrixPages[0].columnWidths.length, 24);
+  assert.ok(rendered.logicalHeight > 0);
+  assert.ok(rendered.logicalWidth > 780);
+  assert.equal(rendered.canvas.width, Math.ceil(rendered.logicalWidth * rendered.scale));
+  assert.equal(rendered.canvas.height, Math.ceil(rendered.logicalHeight * rendered.scale));
   assert.ok(rendered.canvas.width * rendered.canvas.height <= 24000000 + rendered.canvas.width);
 });
 
@@ -373,6 +467,213 @@ test("PNG Blob을 생성하고 null Blob 오류를 처리한다", async () => {
     createPngReport(model, { canvasFactory: fakeCanvasFactory({ nullBlob: true }) }),
     /PNG 데이터를 만들지 못했습니다/,
   );
+});
+
+test("PNG 너비는 콘텐츠 기반 최소값을 사용하고 작은 정산의 오른쪽 공백을 줄인다", () => {
+  const shareReport = require("../static/share-report.js");
+  assert.equal(shareReport.LOGICAL_WIDTH, 780);
+  const cases = [[3, 2], [5, 4], [7, 5], [10, 10]];
+  const measurements = cases.map(([memberCount, paymentCount]) => {
+    const names = Array.from({ length: memberCount }, (_, index) => `멤버${index + 1}`);
+    const payments = Array.from({ length: paymentCount }, (_, index) => ({
+      payer: names[index % names.length],
+      amount: (index + 1) * 13700,
+      place: `아주 긴 사용처 이름 ${index + 1}호점`,
+    }));
+    const state = stateOf(names, payments);
+    const model = buildShareModel(state, calculateSettlement(state));
+    const layout = shareReport.createLayout(model, {
+      font: "", measureText: (value) => ({ width: String(value).length * 8 }),
+    });
+    assert.ok(layout.width >= 780);
+    assert.ok(layout.metrics.rightMargin >= 62);
+    assert.equal(layout.metrics.leftMargin, 62);
+    assert.ok(layout.metrics.contentRight <= layout.width - 62);
+    assert.ok(["summary", "matrix", "legend", "transfers"].includes(layout.metrics.widthDriver));
+    return {
+      width: layout.width,
+      oldFormulaWidth: Math.max(1000, layout.metrics.matrixRight + 62),
+      metrics: layout.metrics,
+    };
+  });
+  assert.equal(measurements[0].width, 780);
+  assert.ok(measurements[1].width < 1000, "중간 규모 매트릭스도 기존 고정 폭보다 작아야 한다");
+  assert.ok(measurements[3].width >= measurements[0].width, "콘텐츠가 늘면 너비가 유지 또는 확장된다");
+  assert.ok(measurements[3].width > measurements[0].width, "10건 매트릭스는 콘텐츠 너비에 따라 확장되어야 한다");
+  assert.ok(measurements[0].metrics.rightMargin < 1000 - measurements[0].metrics.contentRight);
+  assert.ok(measurements[0].width < measurements[0].oldFormulaWidth);
+  assert.ok(measurements[1].width < measurements[1].oldFormulaWidth);
+});
+
+test("PNG 너비와 송금 줄바꿈은 콘텐츠 너비와 80px 그룹 간격을 따른다", () => {
+  const names = Array.from({ length: 8 }, (_, index) => `이름${index + 1}`);
+  const payments = names.map((payer, index) => ({ payer, amount: 1000 + index, place: `결제${index + 1}` }));
+  const state = stateOf(names, payments);
+  const model = buildShareModel(state, calculateSettlement(state));
+  const layout = require("../static/share-report.js").createLayout(model, {
+    font: "", measureText: (value) => ({ width: String(value).length * 8 }),
+  });
+  assert.ok(layout.metrics.transferGroups.length > 0);
+  const rows = new Map();
+  layout.metrics.transferGroups.forEach((group) => rows.set(group.row, (rows.get(group.row) || 0) + 1));
+  assert.ok([...rows.values()].every((count) => count > 0));
+  assert.ok(layout.metrics.transferGroups.every((group) => group.x + group.width <= layout.width - 62));
+});
+
+test("넓은 단일 매트릭스에서는 송금 그룹을 세 개 초과 배치하고 부족하면 그룹 단위로 줄바꿈한다", () => {
+  const names = ["준녕", "민성", "현진", "광일", "지은", "현구", "아주긴이름"];
+  const payments = Array.from({ length: 12 }, (_, index) => ({
+    payer: names[index % names.length], amount: 1000 + index, place: `결제${index + 1}`,
+  }));
+  const { model } = reportFor(stateOf(names, payments));
+  model.transfers = names.slice(0, 6).map((sender) => [sender, "아주긴이름", 100]);
+
+  const wide = require("../static/share-report.js").createLayout(model, {
+    font: "", measureText: (value) => ({ width: String(value).length * 8 }),
+  });
+  const wideRows = new Map();
+  wide.metrics.transferGroups.forEach((group) => wideRows.set(group.row, (wideRows.get(group.row) || []).concat(group)));
+  assert.equal(wideRows.size, 1);
+  assert.equal([...wideRows.values()][0].length, 6);
+  for (const groups of wideRows.values()) {
+    for (let index = 1; index < groups.length; index += 1) {
+      assert.equal(groups[index].x - (groups[index - 1].x + groups[index - 1].width), 80);
+    }
+  }
+
+  const narrowModel = { ...model, payments: model.payments.slice(0, 1), transfers: model.transfers };
+  const narrow = require("../static/share-report.js").createLayout(narrowModel, {
+    font: "", measureText: (value) => ({ width: String(value).length * 8 }),
+  });
+  const narrowRows = new Set(narrow.metrics.transferGroups.map((group) => group.row));
+  assert.ok(narrowRows.size > 1);
+  assert.ok(narrow.metrics.transferGroups.every((group) => group.x + group.width <= narrow.width - 62));
+});
+
+test("송금 그룹의 동일 행 간격은 80 논리 px이며 너비 측정과 배치 좌표가 일치한다", () => {
+  const state = stateOf(["A", "B", "C", "D"], [
+    { payer: "A", amount: 180 },
+    { payer: "B", amount: 140 },
+    { payer: "C", amount: 30 },
+    { payer: "D", amount: 50 },
+  ]);
+  const model = buildShareModel(state, calculateSettlement(state));
+  const layout = require("../static/share-report.js").createLayout(model, {
+    font: "", measureText: (value) => ({ width: String(value).length * 8 }),
+  });
+  const [first, second] = layout.metrics.transferGroups;
+  assert.equal(first.row, second.row);
+  assert.equal(second.x - (first.x + first.width), 80);
+  assert.equal(layout.metrics.matrixColumnsPerPage, 4);
+});
+
+test("6·7·8·9·10·12건과 3·5·7·10명에서 단일 표 진단 레이아웃을 비교한다", () => {
+  const shareReport = require("../static/share-report.js");
+  const paymentCounts = [6, 7, 8, 9, 10, 12];
+  const memberCounts = [3, 5, 7, 10];
+  const placeSets = [
+    ["식당", "카페", "택시"],
+    ["회시장", "편의점", "노래방", "투다리"],
+    ["아주 긴 한글 사용처 이름이 있는 저녁 식사", "역 근처 주차장 및 간식 구매", "친구 생일 기념 식사 장소"],
+  ];
+  function namesFor(count) {
+    const candidates = count <= 5
+      ? ["준녕", "민성", "현진", "지은", "현구"]
+      : ["준녕", "현진", "아주긴한글이름의참여자", "Alex Morgan", "김광일", "지은", "민성", "현규", "Christopher Long", "Long Member Name"];
+    return candidates.slice(0, count);
+  }
+  function measureContext() {
+    return { font: "", measureText: (value) => ({ width: String(value).length * 8 }) };
+  }
+  function assertLayoutFits(layout) {
+    for (const command of layout.commands) {
+      if (command.type === "rect") {
+        assert.ok(command.x >= 0 && command.x + command.width <= layout.width);
+        assert.ok(command.y >= 0 && command.y + command.height <= layout.height);
+      } else if (command.type === "line") {
+        assert.ok(command.x1 >= 0 && command.x2 <= layout.width);
+        assert.ok(command.y >= 0 && command.y <= layout.height);
+      } else if (command.type === "direction") {
+        assert.ok(command.x >= 0 && command.x + command.width <= layout.width);
+      } else if (command.type === "text") {
+        const context = measureContext();
+        context.font = command.font;
+        const width = context.measureText(command.value).width;
+        const textLeft = command.align === "center" ? command.x - width / 2
+          : command.align === "right" ? command.x - width : command.x;
+        assert.ok(textLeft >= -0.01 && textLeft + width <= layout.width + 0.01, `text overflow: ${command.value}`);
+        assert.ok(command.y >= 0 && command.y <= layout.height, `vertical overflow: ${command.value}`);
+      }
+    }
+  }
+
+  for (const memberCount of memberCounts) {
+    for (const paymentCount of paymentCounts) {
+      const names = namesFor(memberCount);
+      for (const places of placeSets) {
+        const payments = Array.from({ length: paymentCount }, (_, index) => ({
+          payer: names[index % names.length],
+          amount: [890, 18500 + index * 137, 285000 + index * 1200, 1234567][index % 4],
+          place: places[index % places.length],
+        }));
+        const state = stateOf(names, payments);
+        const model = buildShareModel(state, calculateSettlement(state));
+        const split = shareReport.createLayout(model, measureContext(), { matrixColumnsPerPage: 6 });
+        const single = shareReport.createLayout(model, measureContext());
+        const splitPng = shareReport.renderReportCanvas(model, {
+          canvasFactory: fakeCanvasFactory({ characterWidth: 8 }),
+          matrixColumnsPerPage: 6,
+        });
+        const singlePng = shareReport.renderReportCanvas(model, { canvasFactory: fakeCanvasFactory({ characterWidth: 8 }) });
+
+        assert.equal(split.metrics.matrixPages.length, Math.ceil(paymentCount / 6));
+        assert.equal(single.metrics.matrixPages.length, 1);
+        assert.equal(single.metrics.matrixPages[0].columnWidths.length, paymentCount);
+        assert.ok(split.metrics.matrixRight <= split.width - 62);
+        assert.ok(single.metrics.matrixRight <= single.width - 62);
+        assert.ok(single.width >= split.width);
+        assertLayoutFits(split);
+        assertLayoutFits(single);
+        if (paymentCount > 6) assert.ok(single.height < split.height);
+        assert.ok(single.metrics.matrixPages[0].columnWidths.every((width) => width >= 76));
+        for (const [layout, rendered] of [[split, splitPng], [single, singlePng]]) {
+          assert.equal(rendered.logicalWidth, layout.width);
+          assert.equal(rendered.logicalHeight, layout.height);
+          assert.equal(rendered.canvas.width, Math.ceil(layout.width * rendered.scale));
+          assert.equal(rendered.canvas.height, Math.ceil(layout.height * rendered.scale));
+          assert.ok(rendered.canvas.width * rendered.canvas.height <= shareReport.MAX_PIXELS + rendered.canvas.width + rendered.canvas.height);
+        }
+      }
+    }
+  }
+
+  const names = namesFor(10);
+  const state = stateOf(names, Array.from({ length: 12 }, (_, index) => ({
+    payer: names[index % names.length], amount: 890 + index, place: "아주 긴 한글 사용처 이름이 있는 저녁 식사",
+  })));
+  const model = buildShareModel(state, calculateSettlement(state));
+  const splitReference = shareReport.createLayout(model, measureContext(), { matrixColumnsPerPage: 6 });
+  const normal = shareReport.createLayout(model, measureContext());
+  const single = normal;
+  assert.equal(normal.metrics.matrixColumnsPerPage, 12);
+  assert.equal(normal.metrics.matrixPages.length, 1);
+  assert.equal(splitReference.metrics.matrixColumnsPerPage, 6);
+  assert.equal(splitReference.metrics.matrixPages.length, 2);
+  assert.equal(single.metrics.matrixPages.length, 1);
+  assert.ok(single.metrics.matrixPages[0].width > splitReference.metrics.matrixPages[0].width);
+  assert.ok(single.metrics.matrixPages[0].height < splitReference.height);
+});
+
+test("매우 긴 송금인 이름이 최소 폭을 넘으면 글자를 줄이지 않고 콘텐츠 폭으로 확장한다", () => {
+  const names = ["A", "받는사람이아주아주긴이름을가진모임멤버".repeat(5)];
+  const state = stateOf(names, [{ payer: "A", amount: 1000, place: "식사" }]);
+  const model = buildShareModel(state, calculateSettlement(state));
+  const layout = require("../static/share-report.js").createLayout(model, {
+    font: "", measureText: (value) => ({ width: String(value).length * 8 }),
+  });
+  assert.equal(layout.metrics.widthDriver, "transfers");
+  assert.ok(layout.width > 780);
+  assert.ok(layout.metrics.transferRight <= layout.width - 62);
 });
 
 test("공유 API 지원·미지원·취소·실패를 구분한다", async () => {
@@ -436,8 +737,9 @@ test("6명·4건 실사용 예시의 화면·텍스트·PNG 원본 값이 일치
   ]);
   assert.deepEqual(model.transfers, calculation.transfers);
   const text = buildCopyText(state, calculation);
-  assert.match(text, /총액: 344,200원/);
-  assert.match(text, /\[현진\] → 준녕 56,417원/);
+  assert.match(text, /총 결제액 344,200원/);
+  assert.match(text, /현진 → 준녕 56,417원/);
+  assert.doesNotMatch(text, /회시장|부담:/);
   const pngText = renderReportCanvas(model, { canvasFactory: fakeCanvasFactory() }).commands.map((command) => command.value || "").join(" ");
   assert.match(pngText, /344,200원/);
   assert.ok(pngText.includes("준녕") && pngText.includes("56,417원"));
@@ -495,7 +797,7 @@ test("공통 부담자 구성에서도 결제별 실제 정산 금액 매트릭�
   assert.match(output, /카페/);
 });
 
-test("매트릭스는 열을 6개씩 나누고 공백 사용처는 결제 번호를 사용한다", () => {
+test("운영 매트릭스는 모든 결제 열을 하나의 표에 표시하고 공백 사용처는 결제 번호를 사용한다", () => {
   const names = Array.from({ length: 12 }, (_, index) => `멤버${index + 1}`);
   const payments = Array.from({ length: 13 }, (_, index) => ({
     payer: names[index % names.length], amount: 1300 + index, place: index === 0 ? "" : `사용처${index + 1}`,
@@ -506,11 +808,13 @@ test("매트릭스는 열을 6개씩 나누고 공백 사용처는 결제 번호
     font: "", measureText: (value) => ({ width: String(value).length * 10 }),
   });
   const output = layout.commands.filter((command) => command.type === "text").map((command) => command.value).join("\n");
-  assert.equal(model.matrixPageCount, 3);
+  assert.equal(model.matrixColumnsPerPage, 13);
+  assert.equal(model.matrixPageCount, 1);
+  assert.equal(layout.metrics.matrixPages.length, 1);
+  assert.equal(layout.metrics.matrixPages[0].columnWidths.length, 13);
   assert.match(output, /결제 1/);
-  assert.match(output, /결제 1–6/);
-  assert.match(output, /결제 13–13/);
-  assert.ok(layout.height > 1500);
+  assert.match(output, /사용처13/);
+  assert.doesNotMatch(output, /결제 1–6/);
 });
 
 test("기본 결제 합산의 나머지를 결제별로 배분해 행·열·전체 합계를 코어와 일치시킨다", () => {
@@ -622,20 +926,20 @@ test("결제자가 미참여여도 색상은 유지하고 분담액과 대시는
   assert.equal(model.payments[0].amountsByMember.A,0);
 });
 
-test("내용이 적은 표의 정산액은 마지막 결제 열에 붙고 장식선이 없다", () => {
+test("내용이 적은 표에서 정산액은 이름 옆, 첫 결제 열 앞에 오고 장식선이 없다", () => {
   const {model}=reportFor(stateOf(["A","B"],[{payer:"A",amount:100,place:"카페"}]));
   const rendered=renderReportCanvas(model,{canvasFactory:fakeCanvasFactory()});
   assert.equal(rendered.commands.filter(c=>c.type==="line" && c.role!=="row-guide").length,0);
   const cell=rendered.commands.find(c=>c.type==="rect" && c.paymentId);
   const result=rendered.commands.find(c=>c.type==="text" && c.value==="정산액");
-  assert.ok(result.x > cell.x+cell.width);
-  assert.ok(result.x-(cell.x+cell.width)<100);
-  assert.ok(result.x<rendered.logicalWidth-150);
+  assert.ok(result.x < cell.x);
+  assert.ok(cell.x - result.x < 100);
+  assert.ok(result.x < rendered.logicalWidth - 150);
   const value=rendered.commands.find(c=>c.type==="text" && c.value==="50원" && c.y>cell.y);
   assert.equal(value.baseline,"alphabetic");
 });
 
-test("송금 그룹은 행당 최대 세 개이며 방향 표시와 행 가이드가 독립적으로 렌더링된다", () => {
+test("송금 그룹은 실제 폭으로 배치되고 방향 표시와 행 가이드가 독립적으로 렌더링된다", () => {
   const names=["A","B","C","D","E"];
   const {model}=reportFor(stateOf(names,[{payer:"A",amount:500}]));
   const {commands}=renderReportCanvas(model,{canvasFactory:fakeCanvasFactory()});
@@ -643,7 +947,7 @@ test("송금 그룹은 행당 최대 세 개이며 방향 표시와 행 가이�
   const senders=commands.filter(c=>c.type==="text" && ["B","C","D","E"].includes(c.value) && c.y<heading.y);
   const counts=new Map();
   senders.forEach(c=>counts.set(c.y,(counts.get(c.y)||0)+1));
-  assert.ok([...counts.values()].every(count=>count<=3));
+  assert.ok([...counts.values()].every(count=>count>0));
   const arrows=commands.filter(c=>c.type==="direction");
   assert.equal(arrows.length,model.transfers.length);
   assert.ok(arrows.every(c=>c.width===20));
@@ -652,6 +956,22 @@ test("송금 그룹은 행당 최대 세 개이며 방향 표시와 행 가이�
   assert.equal(guides.length,names.length);
   assert.equal(new Set(guides.map(c=>c.x2-c.x1)).size,1);
   assert.ok(guides.every((c,i)=>i===0 || c.y>guides[i-1].y));
+});
+
+test("정산 상세에서 이름 다음에 정산액이 오고 건별 열이 이어진다", () => {
+  const { model } = reportFor(stateOf(["A", "B"], [
+    { payer: "A", amount: 100, place: "첫 결제" },
+    { payer: "B", amount: 200, place: "둘째 결제" },
+  ]));
+  const layout = require("../static/share-report.js").createLayout(model, {
+    font: "", measureText: (value) => ({ width: String(value).length * 8 }),
+  });
+  const page = layout.metrics.matrixPages[0];
+  assert.equal(page.netLeft, page.nameRight + 20);
+  assert.equal(page.paymentColumnLefts[0], page.netLeft + page.netWidth + 24);
+  assert.equal(page.paymentColumnLefts[1] - (page.paymentColumnLefts[0] + page.columnWidths[0]), 10);
+  const guide = layout.commands.find((command) => command.type === "line" && command.role === "row-guide");
+  assert.equal(guide.x2, layout.metrics.matrixRight);
 });
 
 

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>PNG 정산 리포트 검수</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Malgun Gothic", sans-serif; color: #293532; background: #f4f6f5; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px 14px 40px; }
+    main { width: min(100%, 980px); margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 1.35rem; }
+    .intro { margin: 0 0 18px; color: #68756f; line-height: 1.5; }
+    .sample { margin: 0 0 16px; padding: 14px; border: 1px solid #dfe5e2; border-radius: 14px; background: #fff; }
+    .sample h2 { margin: 0; font-size: 1rem; }
+    .meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 5px; color: #68756f; font-size: .84rem; }
+    .status { margin: 10px 0; font-size: .88rem; color: #52625a; overflow-wrap: anywhere; }
+    .status.error { color: #b4232d; }
+    img { display: block; width: 100%; height: auto; margin-top: 10px; border-radius: 6px; background: #f4f6f5; }
+    .actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+    .download { min-height: 44px; padding: 0 16px; border-radius: 10px; background: #376653; color: white; font: inherit; font-weight: 650; text-decoration: none; display: inline-flex; align-items: center; }
+    .download[hidden], img[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>PNG 정산 리포트 검수</h1>
+    <p class="intro">고정된 예시 데이터로 PNG를 생성합니다. 결과는 브라우저 저장 데이터에 영향을 주지 않습니다.</p>
+    <section class="sample" data-sample="5x4" aria-labelledby="title-5x4">
+      <h2 id="title-5x4">A · 5명 4건</h2>
+      <div class="meta"><span data-dimensions>크기 계산 중</span><span data-logical></span></div>
+      <p class="status" data-status role="status">PNG 생성 중</p>
+      <img alt="5명 4건 정산 결과 PNG" hidden />
+      <div class="actions"><a class="download" data-download hidden>PNG 저장</a></div>
+    </section>
+    <section class="sample" data-sample="10x7" aria-labelledby="title-10x7">
+      <h2 id="title-10x7">B · 10명 7건</h2>
+      <div class="meta"><span data-dimensions>크기 계산 중</span><span data-logical></span></div>
+      <p class="status" data-status role="status">PNG 생성 중</p>
+      <img alt="10명 7건 정산 결과 PNG" hidden />
+      <div class="actions"><a class="download" data-download hidden>PNG 저장</a></div>
+    </section>
+    <section class="sample" data-sample="10x10" aria-labelledby="title-10x10">
+      <h2 id="title-10x10">C · 10명 10건</h2>
+      <div class="meta"><span data-dimensions>크기 계산 중</span><span data-logical></span></div>
+      <p class="status" data-status role="status">PNG 생성 중</p>
+      <img alt="10명 10건 정산 결과 PNG" hidden />
+      <div class="actions"><a class="download" data-download hidden>PNG 저장</a></div>
+    </section>
+    <section class="sample" data-sample="10x12" aria-labelledby="title-10x12">
+      <h2 id="title-10x12">D · 10명 12건</h2>
+      <div class="meta"><span data-dimensions>크기 계산 중</span><span data-logical></span></div>
+      <p class="status" data-status role="status">PNG 생성 중</p>
+      <img alt="10명 12건 정산 결과 PNG" hidden />
+      <div class="actions"><a class="download" data-download hidden>PNG 저장</a></div>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='settlement-core.js') }}"></script>
+  <script src="{{ url_for('static', filename='share-report.js') }}"></script>
+  <script src="{{ url_for('static', filename='png-review.js') }}"></script>
+</body>
+</html>
