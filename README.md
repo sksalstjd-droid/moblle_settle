@@ -5,6 +5,8 @@
 ## 주요 기능
 
 - 멤버와 결제 내역의 추가, 수정, 삭제
+- 기존 멤버의 추가 결제와 중복 멤버 등록 방지
+- 결제내역만 비우기 및 전체 초기화의 앱 내 확인 절차
 - 전체 결제를 기본 정산 대상자에게 나누는 일반 정산
 - 필요한 결제만 정산 인원을 따로 지정하는 개별 정산
 - 정산 결과와 최종 송금 관계 계산
@@ -57,7 +59,7 @@ python scripts/build_static.py
 
 빌더는 `templates/index.html`의 실제 정적 리소스 경로를 변환하고 운영에 필요한 CSS, JavaScript, SVG만 `dist/`에 복사합니다. 개발용 Live Reload와 PNG 검수 페이지는 제외됩니다. 빌드는 준비된 임시 폴더에서 완료한 뒤 `dist/`로 교체하며, 반복 빌드 때 오래된 파일을 남기지 않습니다. `dist/`는 생성물이므로 `.gitignore`에 등록되어 Git에 포함되지 않습니다.
 
-Cloudflare Workers Git 연동은 GitHub의 `main`을 운영 브랜치로 사용합니다. Workers 빌드 명령은 `python scripts/build_static.py`이며, `wrangler.jsonc`가 Worker 이름 `mobile-settlement`과 정적 자산 폴더 `./dist`를 지정합니다. GitHub `main`에 반영된 변경이 Workers 빌드·배포를 실행합니다. Cloudflare의 Git 연동 및 빌드 설정은 [Workers Builds 안내](https://developers.cloudflare.com/workers/ci-cd/builds/)를 참고하세요.
+Cloudflare Workers Git 연동은 GitHub `main`을 운영 브랜치로 사용하고 빌드 명령은 `python scripts/build_static.py`입니다. Workers 연결 및 빌드 설정은 Cloudflare 프로젝트에서 관리합니다. 빌드 구조는 [ARCHITECTURE.md](ARCHITECTURE.md)를 참고하세요.
 
 운영 배포에는 Flask 서버, 데이터베이스, 서버 API가 필요하지 않습니다. Flask와 개발 전용 라우트는 로컬 개발 환경에 남아 있습니다.
 

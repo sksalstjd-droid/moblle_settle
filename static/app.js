@@ -38,7 +38,6 @@ let exceptionEditingPaymentId = null;
 let preparedShare = null;
 let quickInputFocused = false;
 let quickVisibilityFrame = null;
-let quickSavedPayer = null;
 let confirmReturnFocus = null;
 let confirmFallbackFocus = null;
 let confirmAction = null;
@@ -334,7 +333,6 @@ function renderPayerButtons() {
     button.style.borderColor = colorOf(name);
     button.style.color = colorOf(name);
     button.addEventListener("click", () => {
-      quickSavedPayer = null;
       clearQuickInputErrors();
       $("payerInput").value = name;
       $("amountInput").focus();
@@ -977,7 +975,6 @@ function addPayment() {
 
   state = result.state;
   invalidateShareImage();
-  quickSavedPayer = payer;
   amountInput.value = "";
   $("placeInput").value = "";
   clearQuickInputError(amountInput);
@@ -988,30 +985,43 @@ function addPayment() {
 }
 
 function clearPaymentsOnly() {
-  if (!confirm("결제내역만 삭제할까요? 멤버 명단은 유지됩니다.")) return;
-
-  state.payments = [];
-  showAllPayments = false;
-  editingPaymentId = null;
-  exceptionEditingPaymentId = null;
-  saveAndRender();
-  closeStartOverDetails();
+  openConfirmDialog({
+    title: "결제내역만 비우기",
+    message: "결제 내역을 삭제할까요?",
+    detail: "멤버 명단은 유지됩니다.",
+    actionLabel: "비우기",
+    fallbackFocus: $("clearPaymentsBtn"),
+    onConfirm: () => {
+      state.payments = [];
+      showAllPayments = false;
+      editingPaymentId = null;
+      exceptionEditingPaymentId = null;
+      saveAndRender();
+      closeStartOverDetails();
+    },
+  });
 }
 
 function resetAll() {
-  if (!confirm("전체 새로 시작할까요? 멤버와 결제내역이 모두 삭제됩니다.")) return;
+  openConfirmDialog({
+    title: "전체 새로 시작",
+    message: "멤버와 결제 내역을 모두 삭제할까요?",
+    actionLabel: "초기화",
+    fallbackFocus: $("resetBtn"),
+    onConfirm: () => {
+      const scrollY = window.scrollY;
+      state = createInitialState();
+      showAllPayments = false;
+      editingPaymentId = null;
+      exceptionEditingPaymentId = null;
+      saveAndRender();
+      closeStartOverDetails();
 
-  const scrollY = window.scrollY;
-  state = createInitialState();
-  showAllPayments = false;
-  editingPaymentId = null;
-  exceptionEditingPaymentId = null;
-  saveAndRender();
-  closeStartOverDetails();
-
-  window.requestAnimationFrame(() => {
-    window.scrollTo({ top: scrollY, behavior: "auto" });
-    $("amountInput").focus({ preventScroll: true });
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: scrollY, behavior: "auto" });
+        $("amountInput").focus({ preventScroll: true });
+      });
+    },
   });
 }
 
@@ -1042,8 +1052,8 @@ function updateSaveButtonText() {
   button.disabled = false;
   const feedback = $("quickInputFeedback");
 
-  if (!amountRaw && !place && name && state.names.includes(name) && name !== quickSavedPayer) {
-    button.textContent = "이미 등록됨";
+  if (!amountRaw && !place && name && state.names.includes(name)) {
+    button.textContent = "금액 입력";
     button.disabled = true;
     return;
   }
@@ -1051,8 +1061,6 @@ function updateSaveButtonText() {
   if (feedback.textContent.startsWith("이미 등록된 멤버")) feedback.textContent = "";
   if (amountRaw) {
     button.textContent = "결제 저장";
-  } else if (name && name === quickSavedPayer) {
-    button.textContent = "금액 입력";
   } else if (!name && place) {
     button.textContent = "이름 입력";
   } else if (place) {
@@ -1096,7 +1104,6 @@ function bindEvents() {
       quickInputFocused = false;
     });
     input.addEventListener("input", () => {
-      quickSavedPayer = null;
       clearQuickInputError(input);
     });
   });
@@ -1107,7 +1114,6 @@ function bindEvents() {
   }
 
   $("payerInput").addEventListener("focus", () => {
-    quickSavedPayer = null;
     $("payerInput").value = "";
     updateSaveButtonText();
   });

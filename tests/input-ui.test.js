@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
+const settlementCore = require("../static/settlement-core.js");
 
 const root = path.join(__dirname, "..");
 function readSource(relativePath) {
@@ -142,21 +144,165 @@ test("빠른 입력은 금액·사용처·멤버 등록을 한 저장 경로로 
   assert.match(appSource, /storeMemberAddition\(localStorage, STORAGE_KEY, state, name\)/);
   assert.equal((appSource.match(/if \(event\.key === "Enter"\) addPayment\(\)/g) || []).length, 3);
   assert.match(appSource, /\$\("payerButtons"\)[\s\S]*?\$\("amountInput"\)\.focus\(\)/);
-  assert.match(appSource, /quickSavedPayer = null;[\s\S]*?clearQuickInputErrors\(\);[\s\S]*?payerInput"\)\.value = name;[\s\S]*?amountInput"\)\.focus\(\)/);
+  assert.match(appSource, /button\.addEventListener\("click", \(\) => \{[\s\S]*?clearQuickInputErrors\(\);[\s\S]*?payerInput"\)\.value = name;[\s\S]*?amountInput"\)\.focus\(\)/);
   assert.match(appSource, /amountInput\.value = "";[\s\S]*?\$\("placeInput"\)\.value = "";[\s\S]*?amountInput\.focus/);
 });
 
-test("기존 이름 칩 선택은 오류 문구를 띄우지 않고, 중복 차단과 신규 멤버 등록을 유지한다", () => {
+test("기존 이름은 금액 입력 전까지 중복 등록을 막고, 금액 입력 후 결제를 허용한다", () => {
   const buttonStateSource = appSource.match(/function updateSaveButtonText\([\s\S]*?\n}\n\nfunction escapeHtml/)?.[0] || "";
   const addSource = appSource.match(/function addPayment\([\s\S]*?\n}\n\nfunction clearPaymentsOnly/)?.[0] || "";
   const chipSource = appSource.match(/function renderPayerButtons\([\s\S]*?\n}\n\nfunction renderMembers/)?.[0] || "";
   assert.match(chipSource, /clearQuickInputErrors\(\)/);
   assert.match(appSource, /function clearQuickInputErrors\(\)[\s\S]*?querySelectorAll\("\.quick-input-fields input"\)[\s\S]*?clearQuickInputError/);
-  assert.match(buttonStateSource, /button\.textContent = "이미 등록됨";\s*button\.disabled = true;\s*return;/);
+  assert.match(buttonStateSource, /state\.names\.includes\(name\)\)\s*\{\s*button\.textContent = "금액 입력";\s*button\.disabled = true;\s*return;/);
   assert.doesNotMatch(buttonStateSource, /showQuickInputNotice/);
   assert.match(addSource, /if \(state\.names\.includes\(entry\.payer\)\)[\s\S]*?showQuickInputNotice\("이미 등록된 멤버/);
   assert.match(addSource, /entry\.action === "add-member"[\s\S]*?addQuickMember\(entry\.payer\)/);
   assert.match(appSource, /function addQuickMember\([\s\S]*?storeMemberAddition\(localStorage, STORAGE_KEY, state, name\)/);
+
+  const updateFunction = buttonStateSource.split("\n\nfunction escapeHtml")[0];
+  const button = { textContent: "", disabled: false };
+  const feedback = { textContent: "" };
+  const amount = { value: "" };
+  const place = { value: "" };
+  const context = {
+    state: { names: ["민성"] },
+    payer: "민성",
+    $: (id) => ({ savePaymentBtn: button, quickInputFeedback: feedback, amountInput: amount, placeInput: place })[id],
+    getPayerInputName: () => context.payer,
+  };
+  vm.runInNewContext(`${updateFunction}\nupdateSaveButtonText()`, context);
+  assert.equal(button.textContent, "금액 입력");
+  assert.equal(button.disabled, true);
+
+  amount.value = "32000";
+  vm.runInNewContext("updateSaveButtonText()", context);
+  assert.equal(button.textContent, "결제 저장");
+  assert.equal(button.disabled, false);
+
+  amount.value = "";
+  place.value = "";
+  vm.runInNewContext("updateSaveButtonText()", context);
+  assert.equal(button.textContent, "금액 입력");
+  assert.equal(button.disabled, true);
+
+  context.payer = "새 멤버";
+  vm.runInNewContext("updateSaveButtonText()", context);
+  assert.equal(button.textContent, "멤버 추가");
+  assert.equal(button.disabled, false);
+
+  const paymentAddFunction = appSource.match(/function addPayment\([\s\S]*?\n}\n\nfunction clearPaymentsOnly/)?.[0]
+    .split("\n\nfunction clearPaymentsOnly")[0] || "";
+  const savedButton = { textContent: "", disabled: false };
+  const payerInput = { value: "민성" };
+  const amountInput = { value: "32000", focus() {} };
+  const placeInput = { value: "식당" };
+  const feedbackInput = { textContent: "" };
+  const stored = new Map();
+  const storage = {
+    getItem: (key) => stored.get(key) ?? null,
+    setItem: (key, value) => stored.set(key, value),
+  };
+  const integration = {
+    state: { schemaVersion: 2, names: ["민성"], payments: [], targets: { 민성: true }, lastPayer: "민성" },
+    localStorage: storage,
+    STORAGE_KEY: "test-state",
+    classifyQuickEntry: settlementCore.classifyQuickEntry,
+    storeDefaultPayment: settlementCore.storeDefaultPayment,
+    createPaymentId: () => `payment-${stored.size + 1}`,
+    getPayerInputName: () => payerInput.value,
+    won: (value) => `${Number(value).toLocaleString("ko-KR")}원`,
+    invalidateShareImage() {},
+    clearQuickInputError() {},
+    showQuickInputError() { assert.fail("valid input should not show an error"); },
+    showQuickInputNotice(message) { assert.fail(message); },
+    keepQuickInputVisible() {},
+    showSaveSuccess(message) { savedButton.textContent = `✓ ${message}`; },
+    render() { vm.runInNewContext("updateSaveButtonText()", integration); },
+    $: (id) => ({ payerInput, amountInput, placeInput, quickInputFeedback: feedbackInput, savePaymentBtn: savedButton })[id],
+  };
+  vm.runInNewContext(`${updateFunction}\n${paymentAddFunction}\naddPayment()`, integration);
+  assert.equal(integration.state.payments.length, 1);
+  assert.equal(integration.state.payments[0].payer, "민성");
+  assert.equal(payerInput.value, "민성");
+  assert.equal(amountInput.value, "");
+  assert.equal(placeInput.value, "");
+  assert.equal(savedButton.disabled, true);
+  assert.equal(savedButton.textContent, "✓ 민성 · 32,000원 저장됨");
+
+  vm.runInNewContext("updateSaveButtonText()", integration); // 저장 완료 표시가 끝난 뒤 다음 입력 상태
+  assert.equal(savedButton.textContent, "금액 입력");
+  assert.equal(savedButton.disabled, true);
+
+  amountInput.value = "5000";
+  placeInput.value = "카페";
+  vm.runInNewContext("updateSaveButtonText(); addPayment()", integration);
+  assert.equal(integration.state.payments.length, 2);
+  assert.equal(integration.state.payments[1].payer, "민성");
+});
+
+test("결제내역 및 전체 초기화는 공통 확인창을 쓰고 확인 전 데이터에 손대지 않는다", () => {
+  const clearSource = appSource.match(/function clearPaymentsOnly\(\) \{[\s\S]*?\n\}/)?.[0] || "";
+  const resetSource = appSource.match(/function resetAll\(\) \{[\s\S]*?\n\}/)?.[0] || "";
+  const saveSource = appSource.match(/function saveAndRender\(\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.doesNotMatch(clearSource + resetSource, /confirm\(/);
+  assert.match(clearSource, /openConfirmDialog\([\s\S]*?onConfirm: \(\) => \{[\s\S]*?state\.payments = \[\][\s\S]*?saveAndRender\(\)/);
+  assert.match(resetSource, /openConfirmDialog\([\s\S]*?onConfirm: \(\) => \{[\s\S]*?state = createInitialState\(\)[\s\S]*?saveAndRender\(\)/);
+  assert.match(saveSource, /saveState\(\)/);
+
+  function harness(source, initialState) {
+    let options = null;
+    let saves = 0;
+    let closed = 0;
+    const context = {
+      state: structuredClone(initialState),
+      showAllPayments: true,
+      editingPaymentId: "edit-1",
+      exceptionEditingPaymentId: "exception-1",
+      openConfirmDialog: (value) => { options = value; },
+      $: (id) => ({ focus() {} }),
+      saveAndRender: () => { saves += 1; },
+      closeStartOverDetails: () => { closed += 1; },
+      createInitialState: () => ({ names: [], payments: [], targets: {}, lastPayer: null }),
+      window: { scrollY: 12, requestAnimationFrame: (fn) => fn(), scrollTo() {} },
+    };
+    vm.runInNewContext(`${source}\n${source.startsWith("function resetAll") ? "resetAll" : "clearPaymentsOnly"}()`, context);
+    return { context, get options() { return options; }, confirm: () => options.onConfirm(), get saves() { return saves; }, get closed() { return closed; } };
+  }
+
+  const original = { names: ["A", "B"], payments: [{ payer: "A", amount: 100 }], targets: { A: true, B: false } };
+  const clear = harness(clearSource, original);
+  assert.equal(clear.context.state.payments.length, 1); // 취소 경로: 확인 콜백 미실행
+  assert.equal(clear.options.actionLabel, "비우기");
+  clear.confirm();
+  assert.deepEqual(Array.from(clear.context.state.names), ["A", "B"]);
+  assert.equal(clear.context.state.payments.length, 0);
+  assert.deepEqual({ ...clear.context.state.targets }, original.targets);
+  assert.equal(clear.saves, 1);
+  assert.equal(clear.closed, 1);
+
+  const reset = harness(resetSource, original);
+  assert.deepEqual(Array.from(reset.context.state.names), ["A", "B"]); // 취소 경로
+  assert.equal(reset.options.actionLabel, "초기화");
+  reset.confirm();
+  assert.deepEqual(Array.from(reset.context.state.names), []);
+  assert.deepEqual(Array.from(reset.context.state.payments), []);
+  assert.equal(reset.saves, 1);
+  assert.equal(reset.closed, 1);
+
+  const actionSource = appSource.match(/function confirmDialogAction\(\) \{[\s\S]*?\n\}/)?.[0] || "";
+  let actionCount = 0;
+  const actionButton = { disabled: false };
+  const cancelButton = { disabled: false };
+  const actionContext = {
+    confirmBusy: false,
+    confirmAction: () => { actionCount += 1; },
+    $: (id) => ({ confirmActionBtn: actionButton, confirmCancelBtn: cancelButton })[id],
+    closeConfirmDialog() { actionContext.confirmAction = null; actionContext.confirmBusy = false; },
+    showToast() {},
+  };
+  vm.runInNewContext(`${actionSource}\nconfirmDialogAction(); confirmDialogAction()`, actionContext);
+  assert.equal(actionCount, 1);
 });
 
 test("새 정산 시작은 유지하고 멤버·결제 수 요약은 표시하지 않는다", () => {
